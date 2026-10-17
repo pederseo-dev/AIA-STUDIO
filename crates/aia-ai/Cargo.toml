@@ -1,0 +1,8 @@
+[package]
+name = "aia-ai"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+aia-core.workspace = true
+serde.workspace = true

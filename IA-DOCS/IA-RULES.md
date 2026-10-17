@@ -1,0 +1,5 @@
+- No generes codigo sin antes consultarme los cambios
+- no consideres tiempo de desarrollo humano ya que tu contruyes con mis instrucciones
+- si necesitas mas conocimientos de algun tema busca skils para usar siempre una arquitectura adecuada
+- para decicciones importantes siempre debatamos antes de implementarlo
+- cada nueva implementacion los haremos con funcionalidades y UI basicas para ir escalando de apoco

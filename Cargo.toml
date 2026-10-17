@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+aia-core = { path = "crates/aia-core" }
+aia-render = { path = "crates/aia-render" }
+aia-ai = { path = "crates/aia-ai" }
+
+# egui_dock 0.21 todavía requiere egui 0.36; vello 0.11 y egui-wgpu 0.36 comparten wgpu 30.
+eframe = { version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "accesskit"] }
+egui_dock = "0.21"
+vello = "0.11"
+kurbo = { version = "0.13", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rfd = "0.17"
+log = "0.4"
+env_logger = "0.11"
+
+# El render y la geometría son lentos sin optimizar; se optimizan también en debug.
+[profile.dev.package."*"]
+opt-level = 2

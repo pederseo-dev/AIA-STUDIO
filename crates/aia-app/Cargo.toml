@@ -1,0 +1,18 @@
+[package]
+name = "aia-app"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "aia-studio"
+path = "src/main.rs"
+
+[dependencies]
+aia-core.workspace = true
+aia-render.workspace = true
+aia-ai.workspace = true
+eframe.workspace = true
+egui_dock.workspace = true
+rfd.workspace = true
+log.workspace = true
+env_logger.workspace = true
