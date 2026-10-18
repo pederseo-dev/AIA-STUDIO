@@ -6,14 +6,14 @@
 |---|---|---|
 | Lenguaje | Rust (edición 2024) | rustc 1.99 |
 | Ventana + UI | eframe / egui | 0.36 |
-| Paneles acoplables | egui_dock | 0.21 |
+| Íconos | egui-phosphor (Phosphor Regular) | 0.14 |
 | GPU | wgpu (compartido por egui y vello) | 30 |
 | Render vectorial | vello | 0.11 |
 | Geometría | kurbo (con `serde`) | 0.13 |
 | Serialización | serde / serde_json | 1.x |
 | Diálogos de archivo | rfd | 0.17 |
 
-**Restricción de versiones:** egui_dock 0.21 requiere egui 0.36 (no 0.37). vello 0.11 y
+**Restricción de versiones:** egui-phosphor 0.14 requiere egui 0.36 (no 0.37). vello 0.11 y
 egui-wgpu 0.36 usan wgpu 30. Antes de actualizar cualquiera, verificar que todos
 sigan compartiendo la misma versión de wgpu (`cargo tree -i wgpu`).
 
@@ -21,11 +21,29 @@ sigan compartiendo la misma versión de wgpu (`cargo tree -i wgpu`).
 
 ```
 crates/
-  aia-core/    Documento, comandos, undo/redo, PanelId. Sin UI ni GPU.
+  aia-core/    Documento, comandos, undo/redo, Mode. Sin UI ni GPU.
   aia-render/  Documento + cámara + overlay → escena vello → textura wgpu.
-  aia-ai/      Configuración de IA por panel (solo tipos por ahora).
-  aia-app/     Ejecutable `aia-studio`: ventana, menú, dock, paneles, herramientas.
+  aia-ai/      Configuración de IA por modo (solo tipos por ahora).
+  aia-app/     Ejecutable `aia-studio`.
 ```
+
+### aia-app por dentro
+```
+src/
+  main.rs         opciones de ventana y backend gráfico (DX12 en Windows)
+  app.rs          nav de modos, layout de paneles, menús, atajos, archivos, persistencia
+  canvas.rs       canvas compartido: render vello→egui, pan/zoom, auto-encuadre (sin herramientas)
+  chat_panel.rs   panel derecho del chat de IA (placeholder)
+  modes/
+    mod.rs        íconos de modo, botón de herramienta con tooltip+atajo
+    draw/         herramientas, gestos, panel lateral (Estilo, Capas), overlay
+    bones.rs      placeholder
+    timeline.rs   placeholder + área de línea de tiempo
+```
+Cada modo expone `tools_ui` (barra de íconos) y `sidebar_ui` (panel lateral); los que
+interpretan el mouse exponen además `canvas_input`, `cursor` y `overlay`. `app.rs` decide
+según el modo activo. El canvas solo hace pan/zoom y render: **el significado de un gesto
+depende del modo** (en Timeline, mover = keyframe).
 
 Dependencias: `aia-app → aia-render → aia-core`, `aia-app → aia-ai → aia-core`.
 
@@ -52,8 +70,9 @@ Document { width, height, background, layers, next_id }
 - Ids únicos (`ShapeId`, `LayerId`) asignados por el documento.
 
 ### 3. Estado de UI fuera del documento
-Selección, herramienta activa, capa activa, cámara y gestos en curso viven en
-`DrawingPanel`, no en el documento. Al arrastrar, el movimiento se muestra como
+Selección, herramienta activa, capa activa y gestos en curso viven en `DrawMode`; la
+cámara en `Canvas`; el modo y los paneles abiertos en `Layout` (persistido con eframe).
+Nada de esto está en el documento. Al arrastrar, el movimiento se muestra como
 `Overlay` provisional y recién al soltar se ejecuta un único `TransformShapes`.
 
 ### 4. Integración vello ↔ egui
@@ -68,5 +87,13 @@ si cambia el tamaño. El shader de egui espera texturas no-sRGB, que es lo que e
 - `build_scene` recibe `scale = pixels_per_point` para renderizar en píxeles físicos.
 - La selección se dibuja en espacio de pantalla (grosor constante).
 
-### 6. Backend gráfico
+### 6. Backend gráfico y ventana
 En Windows se fuerza DX12 (`main.rs::preferred_backends`); `WGPU_BACKEND` lo sobreescribe.
+La ventana se maximiza con `ViewportCommand::Maximized` en el primer frame (no con
+`with_maximized`, que deja la superficie más grande que el área visible).
+
+### 7. Atajos
+Globales en `app.rs` (Ctrl+N/O/S, Ctrl+Z/Y, Ctrl+1/2/3, Ctrl+B, Ctrl+Alt+B); se consumen
+primero los de más modificadores. Los de herramientas (V/R/E, Supr, Esc) los maneja cada
+modo y se ignoran si hay un campo de texto con foco. Todo atajo debe aparecer en el
+tooltip o en el menú correspondiente.

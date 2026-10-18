@@ -30,10 +30,17 @@ cambian entre versiones:
 | eframe 0.36 | `src/epi.rs` | El trait `App` ahora usa `fn ui(&mut self, ui, frame)`; `CreationContext::wgpu_render_state` |
 | egui 0.36 | `src/containers/panel.rs`, `menu.rs` | `Panel::top/left/right/bottom(...).show(ui)`, `CentralPanel::no_frame()`, `MenuBar::new().ui` |
 | egui_dock 0.21 | `src/widgets/tab_viewer.rs`, `dock_state/` | `TabViewer` (requiere `id`), `split_below/right`, `DockArea::show_inside` |
+| egui-phosphor 0.14 | `src/lib.rs`, `src/variants/` | `add_to_fonts(fonts, Variant::Regular)`, constantes `regular::CURSOR`, `BONE`, `FILM_STRIP`, etc. |
+| eframe 0.36 | `src/epi.rs` (persistencia) | `get_value`/`set_value`/`APP_KEY`, `App::save` |
+| egui 0.36 | `src/ui.rs`, `ui_builder.rs` | `scope_builder` + `UiBuilder::max_rect` para centrar los botones de modo |
 | kurbo 0.13 | `src/bezpath.rs`, `src/simplify.rs` | Serde en `BezPath`/`Affine`; `simplify_bezpath` no permite ajustar el umbral de ángulo (descartado para el lápiz) |
 
 ## Documentación y algoritmos
 
 - Docs oficiales: docs.rs de vello, egui, egui_dock y kurbo (referencia general).
 - Enfoque de huesos sobre vectores (deformar puntos de control): modelo de Moho y Adobe Animate.
+- Separación de modos Setup/Animate: modelo de Spine (Esoteric Software).
+- Layout de barra de actividad + panel lateral + panel secundario: Visual Studio Code.
+- Bug de `with_maximized` en Windows: diagnosticado comparando `GetClientRect`/`PrintWindow`
+  con una captura de pantalla (Win32 vía PowerShell).
 - Ramer-Douglas-Peucker y Catmull-Rom → Bézier: se evaluaron para el lápiz (descartado).

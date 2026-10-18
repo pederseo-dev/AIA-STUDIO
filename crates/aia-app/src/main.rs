@@ -1,5 +1,7 @@
 mod app;
-mod panels;
+mod canvas;
+mod chat_panel;
+mod modes;
 
 use eframe::egui;
 use eframe::egui_wgpu::{self, WgpuSetup, wgpu};
@@ -16,8 +18,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("AIA Studio")
             .with_inner_size([1400.0, 860.0])
-            .with_min_inner_size([800.0, 500.0])
-            .with_maximized(true),
+            .with_min_inner_size([800.0, 500.0]),
         renderer: eframe::Renderer::Wgpu,
         wgpu_options,
         ..Default::default()

@@ -1,5 +1,6 @@
 use aia_core::kurbo::{BezPath, Ellipse, Point, Rect, Shape as _};
 use eframe::egui::Key;
+use egui_phosphor::regular as icons;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
@@ -21,9 +22,9 @@ impl Tool {
 
     pub fn icon(self) -> &'static str {
         match self {
-            Tool::Select => "⬉",
-            Tool::Rectangle => "⬜",
-            Tool::Ellipse => "⭕",
+            Tool::Select => icons::CURSOR,
+            Tool::Rectangle => icons::RECTANGLE,
+            Tool::Ellipse => icons::CIRCLE,
         }
     }
 
@@ -32,6 +33,15 @@ impl Tool {
             Tool::Select => Key::V,
             Tool::Rectangle => Key::R,
             Tool::Ellipse => Key::E,
+        }
+    }
+
+    /// Texto del atajo para tooltips, con la ayuda de los modificadores.
+    pub fn shortcut_hint(self) -> &'static str {
+        match self {
+            Tool::Select => "V · Shift+clic suma a la selección",
+            Tool::Rectangle => "R · Shift = cuadrado",
+            Tool::Ellipse => "E · Shift = círculo",
         }
     }
 

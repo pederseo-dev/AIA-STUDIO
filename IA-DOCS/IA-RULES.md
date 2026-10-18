@@ -3,3 +3,5 @@
 - si necesitas mas conocimientos de algun tema busca skils para usar siempre una arquitectura adecuada
 - para decicciones importantes siempre debatamos antes de implementarlo
 - cada nueva implementacion los haremos con funcionalidades y UI basicas para ir escalando de apoco
+- advierteme siempre que creas que alguna decicion tendra alguna repercucion negativa o complique el desarrollo
+- mientras estemos en desarrollo no te preocupes por datos guardados, siempre reiniciamos todo para asegurar que no hayan inconcistencias

@@ -31,7 +31,14 @@ $env:RUST_LOG="warn"; cargo run -p aia-app
 
 > Si `cargo` no se reconoce, reiniciá la terminal (o VS Code) después de instalar Rust.
 
-## Uso del panel Dibujo
+## Interfaz
+
+- **Barra superior**: menús y los tres modos — **Draw** (`Ctrl+1`), **Bones** (`Ctrl+2`), **Timeline** (`Ctrl+3`).
+- **Izquierda**: barra de íconos con las herramientas del modo (nombre y atajo al pasar el mouse) y panel lateral con la configuración (`Ctrl+B` lo oculta).
+- **Derecha**: chat de IA del modo activo, próximamente (`Ctrl+Alt+B` lo oculta).
+- La app recuerda el modo, los paneles abiertos y el tamaño de la ventana.
+
+## Uso del modo Draw
 
 | Acción | Cómo |
 |---|---|
@@ -54,6 +61,6 @@ Los proyectos se guardan como archivos `.aia` (JSON).
 crates/
   aia-core/    # documento, comandos, undo/redo (sin UI ni GPU)
   aia-render/  # render del documento con vello sobre wgpu
-  aia-ai/      # base de configuración de IA por panel (sin chat todavía)
-  aia-app/     # ejecutable: ventana, paneles acoplables, herramientas
+  aia-ai/      # base de configuración de IA por modo (sin chat todavía)
+  aia-app/     # ejecutable: nav de modos, canvas compartido, herramientas, paneles
 ```

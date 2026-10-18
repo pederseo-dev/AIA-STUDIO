@@ -11,9 +11,9 @@ aia-core = { path = "crates/aia-core" }
 aia-render = { path = "crates/aia-render" }
 aia-ai = { path = "crates/aia-ai" }
 
-# egui_dock 0.21 todavía requiere egui 0.36; vello 0.11 y egui-wgpu 0.36 comparten wgpu 30.
-eframe = { version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "accesskit"] }
-egui_dock = "0.21"
+# egui-phosphor 0.14 requiere egui 0.36; vello 0.11 y egui-wgpu 0.36 comparten wgpu 30.
+eframe = { version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "accesskit", "persistence"] }
+egui-phosphor = "0.14"
 vello = "0.11"
 kurbo = { version = "0.13", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }

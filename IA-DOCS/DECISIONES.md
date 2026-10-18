@@ -32,3 +32,25 @@ el usuario defina `WGPU_BACKEND`.
 
 ## 2026-10-17 — Versiones fijadas
 eframe/egui 0.36 en vez de 0.37 porque egui_dock 0.21.1 todavía requiere egui ^0.36.
+(Actualización: egui_dock se quitó, pero egui-phosphor 0.14 también requiere egui 0.36.)
+
+## 2026-10-17 — Modos en vez de paneles acoplables
+El usuario pidió un nav superior con Draw / Bones / Timeline y un layout tipo VS Code:
+herramientas en barra de íconos a la izquierda (tooltip con nombre y atajo), configuración
+en un panel lateral desplegable a la izquierda y el chat de IA a la derecha.
+Cada modo es específico (como Setup/Animate en Spine). Se quitó egui_dock.
+Canvas compartido entre modos; Timeline agrega la línea de tiempo abajo.
+
+## 2026-10-17 — Un único historial de undo
+Compartido por los tres modos. Más simple y predecible que historiales por modo.
+
+## 2026-10-17 — Íconos Phosphor
+egui-phosphor (variante Regular) para modos, herramientas y botones de capas.
+
+## 2026-10-17 — Persistencia del layout
+Se recuerda modo, paneles abiertos y tamaño de ventana/paneles (feature `persistence` de
+eframe, guarda en `%APPDATA%/AIA Studio/data/app.ron`). El documento NO se persiste ahí.
+
+## 2026-10-17 — Flujo de git
+Se trabaja directo en `main` hasta tener una base estable. El usuario dirige y es autor de
+los commits; Claude figura como `Co-Authored-By`.
