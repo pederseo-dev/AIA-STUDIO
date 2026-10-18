@@ -70,14 +70,48 @@ pub struct Overlay<'a> {
     pub guide: Option<&'a BezPath>,
     /// Nodos y manijas visibles para editar.
     pub nodes: Option<NodeOverlay<'a>>,
+    /// Caja de transformación (escalar/rotar) de la selección, en coordenadas del documento.
+    pub transform_box: Option<Rect>,
+    /// Marco de selección que se está arrastrando, en coordenadas del documento.
+    pub marquee: Option<Rect>,
 }
 
-/// Nodos de un trazado a mostrar. Las manijas se ven solo en el nodo seleccionado.
+/// Nodos de un trazado a mostrar. Las manijas se ven solo en los nodos seleccionados.
 pub struct NodeOverlay<'a> {
     pub path: &'a VectorPath,
     /// Del espacio local del trazado al documento.
     pub transform: Affine,
-    pub selected: Option<usize>,
+    pub selected: &'a [usize],
+}
+
+/// Distancia (en puntos de pantalla) de la manija de rotación sobre la caja.
+pub const ROTATE_HANDLE_OFFSET: f64 = 24.0;
+
+/// Manijas de la caja de transformación.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoxHandle {
+    /// 0 = arriba-izquierda, 1 = arriba-derecha, 2 = abajo-derecha, 3 = abajo-izquierda.
+    Corner(u8),
+    /// 0 = arriba, 1 = derecha, 2 = abajo, 3 = izquierda.
+    Edge(u8),
+    Rotate,
+}
+
+/// Posición de cada manija para una caja en espacio de pantalla (puntos).
+/// La usan el render y el hit-testing de la app, así coinciden siempre.
+pub fn box_handles(rect: Rect) -> [(BoxHandle, Point); 9] {
+    let c = rect.center();
+    [
+        (BoxHandle::Corner(0), Point::new(rect.x0, rect.y0)),
+        (BoxHandle::Corner(1), Point::new(rect.x1, rect.y0)),
+        (BoxHandle::Corner(2), Point::new(rect.x1, rect.y1)),
+        (BoxHandle::Corner(3), Point::new(rect.x0, rect.y1)),
+        (BoxHandle::Edge(0), Point::new(c.x, rect.y0)),
+        (BoxHandle::Edge(1), Point::new(rect.x1, c.y)),
+        (BoxHandle::Edge(2), Point::new(c.x, rect.y1)),
+        (BoxHandle::Edge(3), Point::new(rect.x0, c.y)),
+        (BoxHandle::Rotate, Point::new(c.x, rect.y0 - ROTATE_HANDLE_OFFSET)),
+    ]
 }
 
 const WORKSPACE_BG: peniko::Color = peniko::Color::from_rgb8(48, 48, 52);
@@ -106,7 +140,7 @@ fn draw_nodes(scene: &mut Scene, nodes: &NodeOverlay, view: Affine, scale: f64) 
     let half = 3.5 * scale;
     for (i, node) in nodes.path.nodes.iter().enumerate() {
         let p = to_screen * node.point;
-        let selected = nodes.selected == Some(i);
+        let selected = nodes.selected.contains(&i);
         if selected {
             for handle in [node.handle_in, node.handle_out] {
                 if handle == Vec2::ZERO {
@@ -173,6 +207,39 @@ pub fn build_scene(scene: &mut Scene, doc: &Document, camera: &Camera, overlay: 
 
     if let Some(nodes) = &overlay.nodes {
         draw_nodes(scene, nodes, view, scale);
+    }
+
+    if let Some(rect) = overlay.transform_box {
+        draw_transform_box(scene, camera.doc_to_screen().transform_rect_bbox(rect), scale);
+    }
+
+    if let Some(rect) = overlay.marquee {
+        let screen = view.transform_rect_bbox(rect);
+        scene.fill(Fill::NonZero, Affine::IDENTITY, SELECTION.with_alpha(0.12), None, &screen);
+        scene.stroke(&selection_stroke, Affine::IDENTITY, SELECTION, None, &screen);
+    }
+}
+
+/// `rect` en puntos de pantalla; `scale` lo lleva a píxeles.
+fn draw_transform_box(scene: &mut Scene, rect: Rect, scale: f64) {
+    let to_px = Affine::scale(scale);
+    let line = Stroke::new(scale);
+    scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &(to_px.transform_rect_bbox(rect)));
+    let handles = box_handles(rect);
+    let top = to_px * Point::new(rect.center().x, rect.y0);
+    for (handle, p) in handles {
+        let p = to_px * p;
+        let half = 4.0 * scale;
+        if handle == BoxHandle::Rotate {
+            scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &Line::new(top, p));
+            let dot = Circle::new(p, half);
+            scene.fill(Fill::NonZero, Affine::IDENTITY, peniko::Color::WHITE, None, &dot);
+            scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &dot);
+        } else {
+            let square = Rect::from_center_size(p, (half * 2.0, half * 2.0));
+            scene.fill(Fill::NonZero, Affine::IDENTITY, peniko::Color::WHITE, None, &square);
+            scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &square);
+        }
     }
 }
 

@@ -21,9 +21,9 @@ sigan compartiendo la misma versión de wgpu (`cargo tree -i wgpu`).
 
 ```
 crates/
-  aia-core/    Documento, comandos, undo/redo, Mode. Sin UI ni GPU.
+  aia-core/    Documento, comandos, undo/redo, Mode, Agent, archivo de proyecto (chats). Sin UI ni GPU.
   aia-render/  Documento + cámara + overlay → escena vello → textura wgpu.
-  aia-ai/      Configuración de IA por modo (solo tipos por ahora).
+  aia-ai/      Configuración de IA por agente (solo tipos por ahora).
   aia-app/     Ejecutable `aia-studio`.
 ```
 
@@ -33,18 +33,21 @@ src/
   main.rs         opciones de ventana y backend gráfico (DX12 en Windows)
   app.rs          nav de modos, layout de paneles, menús, atajos, archivos, persistencia
   canvas.rs       canvas compartido: render vello→egui, pan/zoom, auto-encuadre (sin herramientas)
-  chat_panel.rs   panel derecho del chat de IA (placeholder)
+  chat_panel.rs   panel de chat: selector de agentes (automático + manual) y conversación del agente
   modes/
-    mod.rs        íconos de modo, botón de herramienta con tooltip+atajo
-    draw/         herramientas (Selección, Editar nodos, Pluma, Rectángulo, Elipse),
-                  gestos, panel lateral (Pluma/Nodo, Estilo, Capas), overlay
-    bones.rs      placeholder
-    timeline.rs   placeholder + área de línea de tiempo
+    mod.rs        íconos de modo y de agente, botón de herramienta con tooltip+atajo
+    design/       (DesignMode)
+      mod.rs      estado del modo, teclado, operaciones (orden, voltear, flechas, portapapeles), overlay
+      input.rs    mouse sobre el canvas por herramienta (Selección, Editar nodos, Pluma, Rect/Elipse)
+      sidebar.rs  panel lateral (Pluma/Nodo, Transformar, Estilo, Capas con formas)
+      tools.rs    herramientas, gestos y matemática de transformación (con tests)
+      clipboard.rs  formas ↔ texto JSON del portapapeles
+    animation.rs  placeholder + área de línea de tiempo (AnimationMode)
 ```
 Cada modo expone `tools_ui` (barra de íconos) y `sidebar_ui` (panel lateral); los que
 interpretan el mouse exponen además `canvas_input`, `cursor` y `overlay`. `app.rs` decide
 según el modo activo. El canvas solo hace pan/zoom y render: **el significado de un gesto
-depende del modo** (en Timeline, mover = keyframe).
+depende del modo** (en Animation, mover = keyframe).
 
 Dependencias: `aia-app → aia-render → aia-core`, `aia-app → aia-ai → aia-core`.
 
@@ -56,13 +59,22 @@ modifica el documento y **devuelve el comando inverso**; el `Editor` guarda los 
 para deshacer/rehacer. `Batch` agrupa varios y se revierte entero si uno falla.
 
 Esto es la base para la IA: los mismos comandos que usa la UI se expondrán como
-herramientas (tool use) del chat de cada panel. Lo que haga la IA queda en el historial.
+herramientas (tool use) de cada agente. Lo que haga la IA queda en el historial.
+
+### Agentes de IA
+- `aia_core::Agent` (Draw, Rigging, Animation). Cada agente pertenece a un modo (`Agent::mode`)
+  y solo trabaja en él: en Animation no hay agente con herramientas que modifiquen la base.
+- Cada agente tiene herramientas fijas, así el caché de prompt se mantiene (cambiar herramientas o
+  modelo a mitad de conversación lo invalida). El contexto variable (modo, selección, resumen de
+  escena) irá como mensajes `system` dentro de la conversación.
+- `aia_core::project`: el `.aia` guarda `{ format_version, document, chats }`. `Chats` no pasa por
+  undo/redo.
 
 ### 2. Modelo del documento
 ```
 Document { width, height, background, layers, next_id }
  └─ Layer { id, name, visible, locked, shapes }   (orden: abajo → arriba)
-     └─ Shape { id, path: VectorPath, transform: Affine, style }
+     └─ Shape { id, name, path: VectorPath, transform: Affine, style }
          ├─ VectorPath { nodes: Vec<Node>, closed }
          │   └─ Node { point, handle_in: Vec2, handle_out: Vec2, kind: Corner|Smooth|Symmetric }
          └─ Style { fill: Option<Color>, stroke: Option<StrokeStyle> }
@@ -77,7 +89,7 @@ Document { width, height, background, layers, next_id }
 - Ids únicos (`ShapeId`, `LayerId`) asignados por el documento.
 
 ### 3. Estado de UI fuera del documento
-Selección, herramienta activa, capa activa y gestos en curso viven en `DrawMode`; la
+Selección, herramienta activa, capa activa y gestos en curso viven en `DesignMode`; la
 cámara en `Canvas`; el modo y los paneles abiertos en `Layout` (persistido con eframe).
 Nada de esto está en el documento. Al arrastrar, el movimiento se muestra como
 `Overlay` provisional y recién al soltar se ejecuta un único `TransformShapes`.

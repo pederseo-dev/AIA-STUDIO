@@ -1,19 +1,25 @@
 //! Los modos de trabajo. Cada uno aporta sus herramientas (barra de íconos),
 //! su panel lateral y su forma de interpretar el mouse sobre el canvas.
 
-pub mod bones;
-pub mod draw;
-pub mod timeline;
+pub mod animation;
+pub mod design;
 
-use aia_core::Mode;
+use aia_core::{Agent, Mode};
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
 pub fn icon(mode: Mode) -> &'static str {
     match mode {
-        Mode::Draw => icons::PEN_NIB,
-        Mode::Bones => icons::BONE,
-        Mode::Timeline => icons::FILM_STRIP,
+        Mode::Design => icons::COMPASS_TOOL,
+        Mode::Animation => icons::FILM_STRIP,
+    }
+}
+
+pub fn agent_icon(agent: Agent) -> &'static str {
+    match agent {
+        Agent::Draw => icons::PEN_NIB,
+        Agent::Rigging => icons::BONE,
+        Agent::Animation => icons::PERSON_SIMPLE_RUN,
     }
 }
 

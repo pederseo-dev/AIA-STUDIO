@@ -1,4 +1,4 @@
-use aia_core::Mode;
+use aia_core::Agent;
 use serde::{Deserialize, Serialize};
 
 /// Configuración global de IA del usuario. Se editará desde el panel de
@@ -6,22 +6,22 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AiSettings {
     pub providers: Vec<ProviderConfig>,
-    /// Una entrada por modo; cada modo tiene su propio chat.
-    pub modes: Vec<ModeAiConfig>,
+    /// Una entrada por agente; cada agente tiene su propio modelo y skills.
+    pub agents: Vec<AgentAiConfig>,
 }
 
 impl Default for AiSettings {
     fn default() -> Self {
         Self {
             providers: Vec::new(),
-            modes: Mode::ALL.into_iter().map(ModeAiConfig::new).collect(),
+            agents: Agent::ALL.into_iter().map(AgentAiConfig::new).collect(),
         }
     }
 }
 
 impl AiSettings {
-    pub fn mode(&self, mode: Mode) -> Option<&ModeAiConfig> {
-        self.modes.iter().find(|m| m.mode == mode)
+    pub fn agent(&self, agent: Agent) -> Option<&AgentAiConfig> {
+        self.agents.iter().find(|a| a.agent == agent)
     }
 
     pub fn provider(&self, id: &str) -> Option<&ProviderConfig> {
@@ -56,7 +56,7 @@ pub struct ModelRef {
     pub model: String,
 }
 
-/// Una skill (instrucciones y conocimiento especializado) activable por modo.
+/// Una skill (instrucciones y conocimiento especializado) activable por agente.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillRef {
     pub id: String,
@@ -64,19 +64,19 @@ pub struct SkillRef {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ModeAiConfig {
-    pub mode: Mode,
-    /// `None` = el chat de este modo está desactivado.
+pub struct AgentAiConfig {
+    pub agent: Agent,
+    /// `None` = el agente está desactivado.
     pub model: Option<ModelRef>,
     pub skills: Vec<SkillRef>,
-    /// Instrucciones extra del usuario para este modo.
+    /// Instrucciones extra del usuario para este agente.
     pub system_prompt: Option<String>,
 }
 
-impl ModeAiConfig {
-    pub fn new(mode: Mode) -> Self {
+impl AgentAiConfig {
+    pub fn new(agent: Agent) -> Self {
         Self {
-            mode,
+            agent,
             model: None,
             skills: Vec::new(),
             system_prompt: None,
@@ -89,10 +89,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_has_one_config_per_mode() {
+    fn default_has_one_config_per_agent() {
         let settings = AiSettings::default();
-        for mode in Mode::ALL {
-            assert!(settings.mode(mode).is_some());
+        for agent in Agent::ALL {
+            assert!(settings.agent(agent).is_some());
         }
     }
 }

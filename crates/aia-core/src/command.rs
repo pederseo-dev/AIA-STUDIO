@@ -34,6 +34,17 @@ pub enum Command {
         id: ShapeId,
         style: Style,
     },
+    RenameShape {
+        id: ShapeId,
+        name: String,
+    },
+    /// Mueve una forma a otra posición, en la misma capa o en otra.
+    /// `index` es la posición final dentro de la capa destino (0 = abajo de todo).
+    MoveShape {
+        id: ShapeId,
+        layer: LayerId,
+        index: usize,
+    },
     /// Reemplaza el trazado (nodos) de una forma.
     SetShapePath {
         id: ShapeId,
@@ -58,6 +69,11 @@ pub enum Command {
     RenameLayer {
         id: LayerId,
         name: String,
+    },
+    /// Cambia la posición de una capa (0 = abajo de todo).
+    MoveLayer {
+        id: LayerId,
+        index: usize,
     },
     /// Varios comandos que se aplican y se deshacen como uno solo.
     Batch {
@@ -139,6 +155,27 @@ impl Command {
                 let old = std::mem::replace(&mut shape.style, style);
                 Ok(Command::SetShapeStyle { id, style: old })
             }
+            Command::RenameShape { id, name } => {
+                let shape = doc.shape_mut(id).ok_or(CommandError::ShapeNotFound(id))?;
+                let old = std::mem::replace(&mut shape.name, name);
+                Ok(Command::RenameShape { id, name: old })
+            }
+            Command::MoveShape { id, layer, index } => {
+                let (from_layer, from_index) = doc.locate_shape(id).ok_or(CommandError::ShapeNotFound(id))?;
+                let target_len = doc.layer(layer).ok_or(CommandError::LayerNotFound(layer))?.shapes.len();
+                // Si se mueve dentro de la misma capa, al sacarla queda un lugar menos.
+                let max = if from_layer == layer { target_len - 1 } else { target_len };
+                if index > max {
+                    return Err(CommandError::IndexOutOfRange(index));
+                }
+                let shape = doc.layer_mut(from_layer).expect("existe").shapes.remove(from_index);
+                doc.layer_mut(layer).expect("existe").shapes.insert(index, shape);
+                Ok(Command::MoveShape {
+                    id,
+                    layer: from_layer,
+                    index: from_index,
+                })
+            }
             Command::SetShapePath { id, path } => {
                 let shape = doc.shape_mut(id).ok_or(CommandError::ShapeNotFound(id))?;
                 let old = std::mem::replace(&mut shape.path, path);
@@ -179,6 +216,15 @@ impl Command {
                 let old = std::mem::replace(&mut layer.name, name);
                 Ok(Command::RenameLayer { id, name: old })
             }
+            Command::MoveLayer { id, index } => {
+                let from = doc.layer_index(id).ok_or(CommandError::LayerNotFound(id))?;
+                if index >= doc.layers.len() {
+                    return Err(CommandError::IndexOutOfRange(index));
+                }
+                let layer = doc.layers.remove(from);
+                doc.layers.insert(index, layer);
+                Ok(Command::MoveLayer { id, index: from })
+            }
             Command::Batch { commands } => {
                 let mut inverses = Vec::with_capacity(commands.len());
                 for command in commands {
@@ -209,6 +255,7 @@ mod tests {
     fn rect_shape(doc: &mut Document) -> Shape {
         Shape {
             id: doc.new_shape_id(),
+            name: "rect".into(),
             path: VectorPath::rect(Rect::new(0.0, 0.0, 10.0, 10.0)),
             transform: Affine::IDENTITY,
             style: Style::default(),
@@ -280,6 +327,60 @@ mod tests {
         .unwrap();
         inverse.apply(&mut doc).unwrap();
         assert_eq!(doc.shape(id).unwrap().transform, Affine::IDENTITY);
+    }
+
+    #[test]
+    fn move_shape_between_layers_and_back() {
+        let mut doc = Document::default();
+        let first = doc.layers[0].id;
+        let second = doc.new_layer_id();
+        Command::InsertLayer {
+            index: None,
+            layer: Layer::new(second, "Capa 2"),
+        }
+        .apply(&mut doc)
+        .unwrap();
+        let a = rect_shape(&mut doc);
+        let b = rect_shape(&mut doc);
+        let (ida, idb) = (a.id, b.id);
+        for shape in [a, b] {
+            Command::InsertShape {
+                layer: first,
+                index: None,
+                shape,
+            }
+            .apply(&mut doc)
+            .unwrap();
+        }
+        let before = doc.clone();
+
+        // Reordenar dentro de la capa: `a` pasa arriba de `b`.
+        let undo_order = Command::MoveShape { id: ida, layer: first, index: 1 }.apply(&mut doc).unwrap();
+        assert_eq!(doc.layers[0].shapes[1].id, ida);
+        // Mover `b` a la otra capa.
+        let undo_layer = Command::MoveShape { id: idb, layer: second, index: 0 }.apply(&mut doc).unwrap();
+        assert_eq!(doc.locate_shape(idb), Some((second, 0)));
+
+        undo_layer.apply(&mut doc).unwrap();
+        undo_order.apply(&mut doc).unwrap();
+        assert_eq!(doc, before);
+    }
+
+    #[test]
+    fn move_layer_and_back() {
+        let mut doc = Document::default();
+        let first = doc.layers[0].id;
+        let second = doc.new_layer_id();
+        Command::InsertLayer {
+            index: None,
+            layer: Layer::new(second, "Capa 2"),
+        }
+        .apply(&mut doc)
+        .unwrap();
+        let undo = Command::MoveLayer { id: first, index: 1 }.apply(&mut doc).unwrap();
+        assert_eq!(doc.layers[1].id, first);
+        undo.apply(&mut doc).unwrap();
+        assert_eq!(doc.layers[0].id, first);
     }
 
     #[test]

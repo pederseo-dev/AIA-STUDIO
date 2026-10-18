@@ -66,6 +66,37 @@ Menús y modos en barras separadas (los modos centrados y más grandes). Botones
 paneles en la esquina superior derecha, dibujados como los de VS Code. El panel inferior es
 general: mensajes en Draw/Bones y la línea de tiempo en Timeline (Ctrl+J).
 
+## 2026-10-18 — Modelo "nodos por forma" confirmado (vs. puntos compartidos de Moho)
+Se debatió el modelo de Moho (puntos/curvas compartidos + rellenos aparte). Se eligió seguir
+con un modelo tipo SVG (cada forma con sus nodos) porque es el que mejor maneja la IA:
+los LLM conocen SVG, cada comando es autocontenido y se puede referir a las piezas por nombre.
+La experiencia de herramientas de Moho se puede sumar encima (curvatura, imán, grosor por nodo,
+deformadores). Las articulaciones se resolverán con huesos y pesos. Se agregó `Shape::name`.
+
+## 2026-10-18 — Plan del modo Draw por fases
+Investigación de Moho, LoongBones y DragonBones (ver FUENTES). Fase A (edición básica) hecha;
+Fase B (calidad: paleta, trazo, gradientes, grosor variable, booleanas, grilla, texto) y
+Fase C (grupos, pivote, importar SVG/imágenes, deformadores) pendientes.
+Advertencias: grosor variable y booleanas son costosos (vello no hace trazos de grosor
+variable; kurbo no trae booleanas).
+
+## 2026-10-18 — Dos modos (Design/Animation) y agentes de IA con selector
+Reemplaza "tres modos con un chat cada uno". Dibujo y huesos se alternan todo el tiempo, así
+que van juntos en Design (como Rive y Spine); Animation nunca toca la base. La IA se separa en
+agentes (Draw, Rigging, Animation) dentro de un único panel de chat con selector:
+- Cada agente: conversación, herramientas, modelo y skills propios (caché estable, pocas tools).
+- En Animation solo está disponible el agente Animation (Draw/Rigging deshabilitados).
+- Selección automática según modo y herramienta, con override manual hasta que cambie la sugerencia.
+- Historial de chat por proyecto, dentro del `.aia` (formato v3). Sin migración (regla 7).
+- Pedidos entre agentes: botón de derivación; un orquestador queda para más adelante.
+
+## 2026-10-18 — Portapapeles como texto JSON
+egui solo emite el evento de pegar si el portapapeles del sistema tiene texto, así que las formas
+se copian como JSON (`{"aia_studio_shapes": [...]}`). Permite pegar entre ventanas.
+
+## 2026-10-18 — Atajos de orden con RePág/AvPág/Inicio/Fin
+`Ctrl+[` / `Ctrl+]` no funcionan bien en teclados en español; se usan las teclas de Inkscape.
+
 ## 2026-10-17 — Flujo de git
 Se trabaja directo en `main` hasta tener una base estable. El usuario dirige y es autor de
 los commits; Claude figura como `Co-Authored-By`.

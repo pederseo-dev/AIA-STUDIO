@@ -1,10 +1,11 @@
 use eframe::egui;
 
-/// Modo Timeline: animación con keyframes. Todavía sin herramientas.
+/// Modo Animation: poses, keyframes y curvas. Nunca modifica la base.
+/// Todavía sin herramientas.
 #[derive(Default)]
-pub struct TimelineMode;
+pub struct AnimationMode;
 
-impl TimelineMode {
+impl AnimationMode {
     pub fn tools_ui(&mut self, _ui: &mut egui::Ui) {}
 
     pub fn sidebar_ui(&mut self, ui: &mut egui::Ui) {

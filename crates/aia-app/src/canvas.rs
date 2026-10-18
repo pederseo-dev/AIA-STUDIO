@@ -16,10 +16,14 @@ pub struct CanvasView {
 }
 
 impl CanvasView {
+    /// Posición de pantalla → puntos relativos al canvas (el espacio de `Camera`).
+    pub fn to_local(&self, pos: egui::Pos2) -> Point {
+        Point::new((pos.x - self.rect.min.x) as f64, (pos.y - self.rect.min.y) as f64)
+    }
+
     /// Posición de pantalla → coordenadas del documento.
     pub fn to_doc(&self, pos: egui::Pos2) -> Point {
-        let local = Point::new((pos.x - self.rect.min.x) as f64, (pos.y - self.rect.min.y) as f64);
-        self.camera.screen_to_doc(local)
+        self.camera.screen_to_doc(self.to_local(pos))
     }
 }
 

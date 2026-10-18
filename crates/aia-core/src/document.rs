@@ -3,9 +3,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::path::VectorPath;
 
-/// Versión del formato de archivo `.aia`.
-pub const FORMAT_VERSION: u32 = 2;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ShapeId(pub u64);
 
@@ -73,15 +70,22 @@ impl Default for Style {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Shape {
     pub id: ShapeId,
+    /// Nombre visible ("cabeza", "brazo_izq"): lo usan el panel de capas y la IA.
+    pub name: String,
     pub path: VectorPath,
     pub transform: Affine,
     pub style: Style,
 }
 
 impl Shape {
+    /// Caja envolvente de la geometría en coordenadas del documento (sin el trazo).
+    pub fn geometry_bounds(&self) -> Rect {
+        (self.transform * self.path.to_bezpath()).bounding_box()
+    }
+
     /// Caja envolvente en coordenadas del documento (incluye el grosor del trazo).
     pub fn bounds(&self) -> Rect {
-        let rect = (self.transform * self.path.to_bezpath()).bounding_box();
+        let rect = self.geometry_bounds();
         match self.style.stroke {
             Some(stroke) => rect.inflate(stroke.width / 2.0, stroke.width / 2.0),
             None => rect,
@@ -131,7 +135,6 @@ impl Layer {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Document {
-    pub format_version: u32,
     /// Tamaño del escenario (lo que se exporta), en unidades del documento.
     pub width: f64,
     pub height: f64,
@@ -144,7 +147,6 @@ pub struct Document {
 impl Default for Document {
     fn default() -> Self {
         let mut doc = Self {
-            format_version: FORMAT_VERSION,
             width: 1920.0,
             height: 1080.0,
             background: Color::WHITE,
@@ -217,13 +219,5 @@ impl Document {
             .flat_map(|l| l.shapes.iter().rev())
             .find(|s| s.hit_test(point, tolerance))
             .map(|s| s.id)
-    }
-
-    pub fn to_json(&self) -> serde_json::Result<String> {
-        serde_json::to_string_pretty(self)
-    }
-
-    pub fn from_json(json: &str) -> serde_json::Result<Self> {
-        serde_json::from_str(json)
     }
 }

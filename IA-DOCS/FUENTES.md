@@ -11,6 +11,16 @@ configuración de Claude Code. **Para el chat de IA de los paneles** se usará l
 
 Si en el futuro se instalan skills de Rust/gráficos, anotarlas acá.
 
+### Skill `claude-api` (consultada el 2026-10-18 para diseñar la IA por modo)
+- Modelos y precios por millón de tokens (entrada/salida): Opus 5.5 $4/$20, Sonnet 5.5 $2/$10,
+  Haiku 5.5 $0.10/$0.50; todos con 1M de contexto. Fable 5.1 $10/$50 (el más capaz).
+- Caché de prompt: es por prefijo (herramientas → system → mensajes). **Cambiar herramientas o
+  modelo a mitad de la sesión invalida el caché.** Para inyectar contexto nuevo (modo, selección,
+  resumen de escena) sin romperlo: mensajes `role: "system"` a mitad de la conversación.
+- Muchas herramientas: "tool search" carga solo los esquemas relevantes sin romper el caché.
+- Herramientas con `strict: true` para que los argumentos respeten el esquema.
+- Rust no tiene SDK oficial de Anthropic: la integración será HTTP directo (reqwest + streaming SSE).
+
 ## Registro de crates (crates.io)
 
 - API `https://crates.io/api/v1/crates/<crate>` y `/<versión>/dependencies` para comprobar
