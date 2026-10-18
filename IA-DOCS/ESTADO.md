@@ -17,13 +17,15 @@ No es objetivo (por ahora): animación tradicional cuadro a cuadro ni dibujo a m
 ## Interfaz (estilo VS Code)
 
 ```
-┌ Archivo Editar Ver        [Draw] [Bones] [Timeline]                 ┐  nav: modos (Ctrl+1/2/3)
+┌ Archivo Editar Ver                                   [◧] [⬓] [◨]   ┐  menús + paneles (Ctrl+B/J/Alt+B)
+├               [Draw]   [Bones]   [Timeline]                          ┤  modos (Ctrl+1/2/3)
 ├──┬──────────────┬──────────────────────────────┬─────────────────────┤
 │🛠│ panel lateral │           canvas             │  chat IA del modo   │
 │  │ (config del  │   (compartido entre modos)    │  (próximamente)     │
 │  │  modo)       │                              │                     │
-│⊟ │ Ctrl+B       ├──────────────────────────────┤  Ctrl+Alt+B         │
-│💬│              │ línea de tiempo (solo Timeline)│                     │
+│  │              ├──────────────────────────────┤                     │
+│  │              │ panel inferior: mensajes o    │                     │
+│  │              │ línea de tiempo (Timeline)    │                     │
 ├──┴──────────────┴──────────────────────────────┴─────────────────────┤
 │ barra de estado: modo · zoom · herramienta · mensajes               │
 └──────────────────────────────────────────────────────────────────────┘
@@ -46,7 +48,16 @@ No es objetivo (por ahora): animación tradicional cuadro a cuadro ni dibujo a m
 - Barra de íconos (Phosphor) + panel lateral colapsable + panel de chat a la derecha (placeholder).
 - Bones y Timeline: placeholders (Timeline muestra el área de línea de tiempo bajo el canvas).
 - `PanelId` renombrado a `Mode`; la config de IA es por modo (`ModeAiConfig`).
-- Tests: 9 (`cargo test --workspace`).
+
+**v1.2 — Pluma y edición de nodos**
+- Modelo propio `VectorPath` (nodos con manijas relativas y tipo Esquina/Suave/Simétrico); formato `.aia` v2.
+  Rectángulos y elipses también son nodos editables.
+- Pluma (P): esquina con clic, curva con arrastre, Alt rompe simetría, Shift 45°, cerrar en el primer nodo.
+- Editar nodos (A): mover nodos y manijas, agregar nodo con clic en el trazado, borrar nodo, cambiar tipo, cerrar/abrir trazado.
+- Comando `SetShapePath` (undo de toda edición de nodos).
+- Dos barras superiores (menús + modos centrados más grandes), botones de paneles estilo VS Code,
+  panel inferior general (mensajes / línea de tiempo) con Ctrl+J.
+- Tests: 17 (`cargo test --workspace`).
 
 ## Problemas conocidos / resueltos
 
@@ -63,8 +74,8 @@ No es objetivo (por ahora): animación tradicional cuadro a cuadro ni dibujo a m
 
 ## Próximos pasos (debatir antes de implementar)
 
-1. **Herramienta Pluma** en Draw: crear y editar nodos Bézier.
-2. Transformar (escalar/rotar) con manijas; edición de nodos de formas existentes.
+1. Transformar (escalar/rotar) con manijas en Selección.
+2. Selección de varios nodos (marco) y alinear/distribuir.
 3. Panel de configuración de IA (proveedores, modelos, skills por modo) y chat de Draw con los `Command` como herramientas.
 4. Modo Bones.
 5. Modo Timeline.

@@ -11,12 +11,11 @@ impl TimelineMode {
         super::coming_soon(ui, "Propiedades del keyframe y curvas de easing.");
     }
 
-    /// Área de la línea de tiempo, debajo del canvas.
+    /// Línea de tiempo: ocupa el panel inferior en este modo.
     pub fn timeline_ui(&mut self, ui: &mut egui::Ui) {
-        ui.vertical_centered(|ui| {
-            ui.add_space(12.0);
-            ui.heading("Línea de tiempo");
-            super::coming_soon(ui, "Keyframes por capa y forma, reproducción y scrubbing.");
-        });
+        ui.add_space(4.0);
+        ui.strong("Línea de tiempo");
+        ui.separator();
+        super::coming_soon(ui, "Keyframes por capa y forma, reproducción y scrubbing.");
     }
 }

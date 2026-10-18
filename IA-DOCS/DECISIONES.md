@@ -51,6 +51,21 @@ egui-phosphor (variante Regular) para modos, herramientas y botones de capas.
 Se recuerda modo, paneles abiertos y tamaño de ventana/paneles (feature `persistence` de
 eframe, guarda en `%APPDATA%/AIA Studio/data/app.ron`). El documento NO se persiste ahí.
 
+## 2026-10-17 — Modelo de nodos propio (VectorPath) y formato .aia v2
+`BezPath` de kurbo no guarda el tipo de nodo. Se pasó a `VectorPath { nodes, closed }` con
+nodos de tipo Esquina/Suave/Simétrico. Motivo principal: los huesos van a deformar nodos con pesos.
+Sin migración de archivos v1 (regla 7: en desarrollo no se conservan datos guardados).
+
+## 2026-10-17 — Pluma y Editar nodos
+Pluma estilo Illustrator. Editar nodos (A) se sumó en la misma etapa porque sin ella no se
+pueden corregir curvas. Toda edición de nodos se confirma con un único `SetShapePath`
+(la copia de trabajo vive en el gesto y se muestra con `Overlay::edited`).
+
+## 2026-10-17 — Barras superiores y panel inferior general
+Menús y modos en barras separadas (los modos centrados y más grandes). Botones para ocultar
+paneles en la esquina superior derecha, dibujados como los de VS Code. El panel inferior es
+general: mensajes en Draw/Bones y la línea de tiempo en Timeline (Ctrl+J).
+
 ## 2026-10-17 — Flujo de git
 Se trabaja directo en `main` hasta tener una base estable. El usuario dirige y es autor de
 los commits; Claude figura como `Co-Authored-By`.

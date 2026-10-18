@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use aia_ai::AiSettings;
 use aia_core::{Document, Editor, Mode};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
-use egui_phosphor::regular as icons;
 use serde::{Deserialize, Serialize};
 
 use crate::canvas::Canvas;
@@ -18,6 +17,7 @@ const OPEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O)
 const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
 const SAVE_AS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::S);
 const TOGGLE_SIDEBAR: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::B);
+const TOGGLE_BOTTOM: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::J);
 const TOGGLE_CHAT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::ALT), Key::B);
 
 fn mode_shortcut(mode: Mode) -> KeyboardShortcut {
@@ -30,6 +30,8 @@ fn mode_shortcut(mode: Mode) -> KeyboardShortcut {
 }
 
 const FILE_FILTER: (&str, &[&str]) = ("AIA Studio", &["aia"]);
+/// Máximo de mensajes que guarda el panel inferior.
+const LOG_LIMIT: usize = 200;
 
 /// Estado de la interfaz que se recuerda entre sesiones.
 #[derive(Serialize, Deserialize)]
@@ -37,6 +39,7 @@ const FILE_FILTER: (&str, &[&str]) = ("AIA Studio", &["aia"]);
 struct Layout {
     mode: Mode,
     sidebar_open: bool,
+    bottom_open: bool,
     chat_open: bool,
 }
 
@@ -45,9 +48,18 @@ impl Default for Layout {
         Self {
             mode: Mode::Draw,
             sidebar_open: true,
+            bottom_open: true,
             chat_open: true,
         }
     }
+}
+
+/// Paneles que se pueden ocultar desde los botones de la esquina superior derecha.
+#[derive(Clone, Copy)]
+enum PanelSide {
+    Left,
+    Bottom,
+    Right,
 }
 
 pub struct AiaApp {
@@ -61,7 +73,8 @@ pub struct AiaApp {
     /// Base para los chats de IA por modo; todavía sin UI.
     #[allow(dead_code)]
     ai_settings: AiSettings,
-    error: Option<String>,
+    /// Mensajes para el usuario (errores y avisos). El último se ve en la barra de estado.
+    log: Vec<String>,
     title: String,
     /// El usuario ya confirmó cerrar sin guardar.
     allow_close: bool,
@@ -90,18 +103,34 @@ impl AiaApp {
             timeline: TimelineMode,
             file: None,
             ai_settings: AiSettings::default(),
-            error: None,
+            log: Vec::new(),
             title: String::new(),
             allow_close: false,
             maximize_pending,
         }
     }
 
+    fn notify(&mut self, message: impl Into<String>) {
+        self.log.push(message.into());
+        if self.log.len() > LOG_LIMIT {
+            self.log.remove(0);
+        }
+    }
+
     fn set_mode(&mut self, mode: Mode) {
         if mode != self.layout.mode {
-            self.draw.cancel_gesture();
+            self.draw.leave(&mut self.editor);
             self.layout.mode = mode;
         }
+    }
+
+    fn toggle(&mut self, side: PanelSide) {
+        let open = match side {
+            PanelSide::Left => &mut self.layout.sidebar_open,
+            PanelSide::Bottom => &mut self.layout.bottom_open,
+            PanelSide::Right => &mut self.layout.chat_open,
+        };
+        *open ^= true;
     }
 
     fn update_title(&mut self, ctx: &egui::Context) {
@@ -156,7 +185,7 @@ impl AiaApp {
             .and_then(|json| Document::from_json(&json).map_err(|e| e.to_string()));
         match result {
             Ok(doc) => self.load_editor(Editor::new(doc), Some(path)),
-            Err(e) => self.error = Some(format!("No se pudo abrir {}: {e}", path.display())),
+            Err(e) => self.notify(format!("No se pudo abrir {}: {e}", path.display())),
         }
     }
 
@@ -165,7 +194,6 @@ impl AiaApp {
         self.file = file;
         self.canvas.reset_view();
         self.draw.reset();
-        self.error = None;
     }
 
     /// Devuelve `true` si se guardó.
@@ -195,12 +223,12 @@ impl AiaApp {
         match result {
             Ok(()) => {
                 self.editor.mark_saved();
+                self.notify(format!("Guardado en {}", path.display()));
                 self.file = Some(path);
-                self.error = None;
                 true
             }
             Err(e) => {
-                self.error = Some(format!("No se pudo guardar {}: {e}", path.display()));
+                self.notify(format!("No se pudo guardar {}: {e}", path.display()));
                 false
             }
         }
@@ -214,8 +242,7 @@ impl AiaApp {
             open: bool,
             save: bool,
             save_as: bool,
-            sidebar: bool,
-            chat: bool,
+            panel: Option<PanelSide>,
             mode: Option<Mode>,
         }
         let pressed = ctx.input_mut(|i| {
@@ -223,15 +250,23 @@ impl AiaApp {
             let redo = i.consume_shortcut(&REDO) || i.consume_shortcut(&REDO_ALT);
             let save_as = i.consume_shortcut(&SAVE_AS);
             let chat = i.consume_shortcut(&TOGGLE_CHAT);
+            let panel = if chat {
+                Some(PanelSide::Right)
+            } else if i.consume_shortcut(&TOGGLE_SIDEBAR) {
+                Some(PanelSide::Left)
+            } else if i.consume_shortcut(&TOGGLE_BOTTOM) {
+                Some(PanelSide::Bottom)
+            } else {
+                None
+            };
             Pressed {
                 redo,
                 save_as,
-                chat,
+                panel,
                 undo: i.consume_shortcut(&UNDO),
                 save: i.consume_shortcut(&SAVE),
                 new: i.consume_shortcut(&NEW),
                 open: i.consume_shortcut(&OPEN),
-                sidebar: i.consume_shortcut(&TOGGLE_SIDEBAR),
                 mode: Mode::ALL.into_iter().find(|m| i.consume_shortcut(&mode_shortcut(*m))),
             }
         });
@@ -252,11 +287,8 @@ impl AiaApp {
         if pressed.open {
             self.open();
         }
-        if pressed.sidebar {
-            self.layout.sidebar_open ^= true;
-        }
-        if pressed.chat {
-            self.layout.chat_open ^= true;
+        if let Some(side) = pressed.panel {
+            self.toggle(side);
         }
         if let Some(mode) = pressed.mode {
             self.set_mode(mode);
@@ -274,29 +306,26 @@ impl AiaApp {
         }
     }
 
-    /// Barra superior: menús a la izquierda y los modos al centro.
-    fn nav_bar(&mut self, ui: &mut egui::Ui) {
-        let full = ui.max_rect();
-        let menu = egui::MenuBar::new().ui(ui, |ui| self.menus(ui)).response.rect;
-
-        let width = 340.0;
-        let center = egui::pos2(full.center().x, menu.center().y);
-        let rect = egui::Rect::from_center_size(center, egui::vec2(width, menu.height().max(26.0)));
-        ui.scope_builder(
-            egui::UiBuilder::new()
-                .max_rect(rect)
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
-            |ui| {
-                for mode in Mode::ALL {
-                    let text = format!("{} {}", modes::icon(mode), mode.title());
-                    let button = egui::Button::selectable(self.layout.mode == mode, text).min_size(egui::vec2(104.0, 24.0));
-                    let tip = format!("{}  ({})", mode.description(), ui.ctx().format_shortcut(&mode_shortcut(mode)));
-                    if ui.add(button).on_hover_text(tip).clicked() {
-                        self.set_mode(mode);
+    /// Primera barra: menús a la izquierda y botones de paneles a la derecha.
+    fn menu_bar(&mut self, ui: &mut egui::Ui) {
+        egui::MenuBar::new().ui(ui, |ui| {
+            self.menus(ui);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // De derecha a izquierda: chat, inferior, lateral (igual que VS Code).
+                let toggles = [
+                    (PanelSide::Right, self.layout.chat_open, "Chat IA", &TOGGLE_CHAT),
+                    (PanelSide::Bottom, self.layout.bottom_open, "Panel inferior", &TOGGLE_BOTTOM),
+                    (PanelSide::Left, self.layout.sidebar_open, "Panel lateral", &TOGGLE_SIDEBAR),
+                ];
+                for (side, open, name, shortcut) in toggles {
+                    let verb = if open { "Ocultar" } else { "Mostrar" };
+                    let tip = format!("{verb} {}  ({})", name.to_lowercase(), ui.ctx().format_shortcut(shortcut));
+                    if panel_toggle(ui, side, open).on_hover_text(tip).clicked() {
+                        self.toggle(side);
                     }
                 }
-            },
-        );
+            });
+        });
     }
 
     fn menus(&mut self, ui: &mut egui::Ui) {
@@ -325,10 +354,13 @@ impl AiaApp {
         });
         ui.menu_button("Ver", |ui| {
             if ui.add(menu_item(ui, "Panel lateral", &TOGGLE_SIDEBAR)).clicked() {
-                self.layout.sidebar_open ^= true;
+                self.toggle(PanelSide::Left);
+            }
+            if ui.add(menu_item(ui, "Panel inferior", &TOGGLE_BOTTOM)).clicked() {
+                self.toggle(PanelSide::Bottom);
             }
             if ui.add(menu_item(ui, "Chat IA", &TOGGLE_CHAT)).clicked() {
-                self.layout.chat_open ^= true;
+                self.toggle(PanelSide::Right);
             }
             ui.separator();
             if ui.button("Encuadrar escenario").clicked() {
@@ -337,25 +369,34 @@ impl AiaApp {
         });
     }
 
-    /// Barra de íconos a la izquierda: herramientas del modo y botones de paneles.
+    /// Segunda barra: los modos de trabajo, centrados.
+    fn mode_bar(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let button_size = egui::vec2(140.0, 32.0);
+            let spacing = ui.spacing().item_spacing.x;
+            let total = button_size.x * Mode::ALL.len() as f32 + spacing * (Mode::ALL.len() - 1) as f32;
+            ui.add_space(((ui.available_width() - total) / 2.0).max(0.0));
+            for mode in Mode::ALL {
+                let text = egui::RichText::new(format!("{}  {}", modes::icon(mode), mode.title())).size(16.0);
+                let button = egui::Button::selectable(self.layout.mode == mode, text).min_size(button_size);
+                let tip = format!("{}  ({})", mode.description(), ui.ctx().format_shortcut(&mode_shortcut(mode)));
+                if ui.add(button).on_hover_text(tip).clicked() {
+                    self.set_mode(mode);
+                }
+            }
+        });
+        ui.add_space(4.0);
+    }
+
+    /// Barra de íconos a la izquierda: herramientas del modo.
     fn activity_bar(&mut self, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
             ui.add_space(6.0);
             match self.layout.mode {
-                Mode::Draw => self.draw.tools_ui(ui),
+                Mode::Draw => self.draw.tools_ui(ui, &mut self.editor),
                 Mode::Bones => self.bones.tools_ui(ui),
                 Mode::Timeline => self.timeline.tools_ui(ui),
-            }
-        });
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-            ui.add_space(6.0);
-            let shortcut = ui.ctx().format_shortcut(&TOGGLE_CHAT);
-            if modes::tool_button(ui, self.layout.chat_open, icons::CHAT_CIRCLE_DOTS, "Chat IA", &shortcut).clicked() {
-                self.layout.chat_open ^= true;
-            }
-            let shortcut = ui.ctx().format_shortcut(&TOGGLE_SIDEBAR);
-            if modes::tool_button(ui, self.layout.sidebar_open, icons::SIDEBAR_SIMPLE, "Panel lateral", &shortcut).clicked() {
-                self.layout.sidebar_open ^= true;
             }
         });
     }
@@ -371,6 +412,25 @@ impl AiaApp {
         });
     }
 
+    /// Panel inferior general: la línea de tiempo en Timeline, los mensajes en los demás modos.
+    fn bottom_panel(&mut self, ui: &mut egui::Ui) {
+        if self.layout.mode == Mode::Timeline {
+            self.timeline.timeline_ui(ui);
+            return;
+        }
+        ui.add_space(4.0);
+        ui.strong("Mensajes");
+        ui.separator();
+        egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
+            if self.log.is_empty() {
+                ui.weak("Sin mensajes.");
+            }
+            for message in &self.log {
+                ui.label(message);
+            }
+        });
+    }
+
     fn canvas_area(&mut self, ui: &mut egui::Ui) {
         let mode = self.layout.mode;
         if mode == Mode::Draw {
@@ -380,7 +440,6 @@ impl AiaApp {
             return;
         };
 
-        let shift = ui.input(|i| i.modifiers.shift);
         let cursor = match mode {
             Mode::Draw => {
                 self.draw.canvas_input(ui, &response, &view, &mut self.editor);
@@ -392,13 +451,13 @@ impl AiaApp {
         };
         response.on_hover_cursor(cursor);
 
-        let preview = (mode == Mode::Draw).then(|| self.draw.preview_shape(shift)).flatten();
+        let data = self.draw.prepare_overlay(ui, &view);
         let overlay = match mode {
-            Mode::Draw => self.draw.overlay(preview.as_ref()),
+            Mode::Draw => self.draw.overlay(&data, &self.editor),
             Mode::Bones | Mode::Timeline => Default::default(),
         };
         if let Err(e) = self.canvas.paint(ui, view.rect, self.editor.doc(), &overlay) {
-            self.error = Some(e);
+            self.notify(e);
         }
     }
 
@@ -411,9 +470,9 @@ impl AiaApp {
                 ui.separator();
                 ui.label(format!("Herramienta: {}", self.draw.tool().name()));
             }
-            if let Some(error) = self.error.as_ref().or(self.draw.message()) {
+            if let Some(message) = self.log.last() {
                 ui.separator();
-                ui.colored_label(ui.visuals().warn_fg_color, error);
+                ui.weak(message);
             }
         });
     }
@@ -421,6 +480,33 @@ impl AiaApp {
 
 fn menu_item<'a>(ui: &egui::Ui, text: &'a str, shortcut: &KeyboardShortcut) -> egui::Button<'a> {
     egui::Button::new(text).shortcut_text(ui.ctx().format_shortcut(shortcut))
+}
+
+/// Botón con el dibujo de la ventana y el panel resaltado (como los de VS Code):
+/// el panel se ve relleno cuando está abierto y solo con borde cuando está cerrado.
+fn panel_toggle(ui: &mut egui::Ui, side: PanelSide, open: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(26.0, 22.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact(&response);
+        if response.hovered() {
+            ui.painter().rect_filled(rect, 4.0, visuals.weak_bg_fill);
+        }
+        let color = visuals.fg_stroke.color;
+        let frame = egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 13.0));
+        let stroke = egui::Stroke::new(1.2, color);
+        ui.painter().rect_stroke(frame, 2.0, stroke, egui::StrokeKind::Inside);
+        let panel = match side {
+            PanelSide::Left => egui::Rect::from_min_max(frame.min, egui::pos2(frame.min.x + 5.0, frame.max.y)),
+            PanelSide::Right => egui::Rect::from_min_max(egui::pos2(frame.max.x - 5.0, frame.min.y), frame.max),
+            PanelSide::Bottom => egui::Rect::from_min_max(egui::pos2(frame.min.x, frame.max.y - 5.0), frame.max),
+        };
+        if open {
+            ui.painter().rect_filled(panel, 1.0, color);
+        } else {
+            ui.painter().rect_stroke(panel, 1.0, stroke, egui::StrokeKind::Inside);
+        }
+    }
+    response
 }
 
 impl eframe::App for AiaApp {
@@ -432,9 +518,13 @@ impl eframe::App for AiaApp {
         self.handle_close_request(&ctx);
         self.handle_shortcuts(&ctx);
         self.draw.sync_with_document(&self.editor);
+        for message in self.draw.take_messages() {
+            self.notify(message);
+        }
 
         // El orden importa: los paneles laterales se reservan antes que el canvas central.
-        egui::Panel::top("nav_bar").show(ui, |ui| self.nav_bar(ui));
+        egui::Panel::top("menu_bar").show(ui, |ui| self.menu_bar(ui));
+        egui::Panel::top("mode_bar").show(ui, |ui| self.mode_bar(ui));
         egui::Panel::bottom("status_bar").show(ui, |ui| self.status_bar(ui));
         egui::Panel::left("activity_bar")
             .resizable(false)
@@ -452,11 +542,11 @@ impl eframe::App for AiaApp {
                 .size_range(220.0..=520.0)
                 .show(ui, |ui| chat_panel::ui(ui, self.layout.mode));
         }
-        if self.layout.mode == Mode::Timeline {
-            egui::Panel::bottom("timeline")
-                .default_size(200.0)
-                .size_range(120.0..=500.0)
-                .show(ui, |ui| self.timeline.timeline_ui(ui));
+        if self.layout.bottom_open {
+            egui::Panel::bottom("bottom_panel")
+                .default_size(180.0)
+                .size_range(80.0..=500.0)
+                .show(ui, |ui| self.bottom_panel(ui));
         }
         egui::CentralPanel::no_frame().show(ui, |ui| self.canvas_area(ui));
 

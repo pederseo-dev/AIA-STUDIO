@@ -33,9 +33,11 @@ $env:RUST_LOG="warn"; cargo run -p aia-app
 
 ## Interfaz
 
-- **Barra superior**: menús y los tres modos — **Draw** (`Ctrl+1`), **Bones** (`Ctrl+2`), **Timeline** (`Ctrl+3`).
-- **Izquierda**: barra de íconos con las herramientas del modo (nombre y atajo al pasar el mouse) y panel lateral con la configuración (`Ctrl+B` lo oculta).
-- **Derecha**: chat de IA del modo activo, próximamente (`Ctrl+Alt+B` lo oculta).
+- **Primera barra**: menús a la izquierda; a la derecha, botones para mostrar u ocultar el panel lateral (`Ctrl+B`), el panel inferior (`Ctrl+J`) y el chat (`Ctrl+Alt+B`).
+- **Segunda barra**: los tres modos — **Draw** (`Ctrl+1`), **Bones** (`Ctrl+2`), **Timeline** (`Ctrl+3`).
+- **Izquierda**: barra de íconos con las herramientas del modo (nombre y atajo al pasar el mouse) y panel lateral con la configuración.
+- **Abajo**: panel general — mensajes en Draw y Bones, línea de tiempo en Timeline.
+- **Derecha**: chat de IA del modo activo (próximamente).
 - La app recuerda el modo, los paneles abiertos y el tamaño de la ventana.
 
 ## Uso del modo Draw
@@ -43,6 +45,8 @@ $env:RUST_LOG="warn"; cargo run -p aia-app
 | Acción | Cómo |
 |---|---|
 | Selección / mover | `V`, clic para seleccionar, `Shift`+clic para sumar, arrastrar para mover |
+| Pluma | `P`: clic = nodo de esquina, arrastrar = nodo con curva, `Alt` = solo manija de salida, `Shift` = 45°, clic en el primer nodo = cerrar, `Enter`/`Esc`/doble clic = terminar |
+| Editar nodos | `A`: clic en una forma, arrastrar nodos y manijas, clic sobre el trazado = agregar nodo, `Alt`+arrastrar manija = esquina, `Supr` = borrar nodo. Tipo de nodo (Esquina/Suave/Simétrico) y cerrar trazado en el panel lateral |
 | Rectángulo | `R`, arrastrar (`Shift` = cuadrado) |
 | Elipse | `E`, arrastrar (`Shift` = círculo) |
 | Borrar selección | `Supr` o `Retroceso` |

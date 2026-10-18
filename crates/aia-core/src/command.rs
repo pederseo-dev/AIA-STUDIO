@@ -4,6 +4,7 @@ use kurbo::Affine;
 use serde::{Deserialize, Serialize};
 
 use crate::document::{Document, Layer, LayerId, Shape, ShapeId, Style};
+use crate::path::VectorPath;
 
 /// Una operación atómica sobre el documento.
 ///
@@ -32,6 +33,11 @@ pub enum Command {
     SetShapeStyle {
         id: ShapeId,
         style: Style,
+    },
+    /// Reemplaza el trazado (nodos) de una forma.
+    SetShapePath {
+        id: ShapeId,
+        path: VectorPath,
     },
     /// Inserta una capa. `index: None` la pone arriba de todo.
     InsertLayer {
@@ -133,6 +139,11 @@ impl Command {
                 let old = std::mem::replace(&mut shape.style, style);
                 Ok(Command::SetShapeStyle { id, style: old })
             }
+            Command::SetShapePath { id, path } => {
+                let shape = doc.shape_mut(id).ok_or(CommandError::ShapeNotFound(id))?;
+                let old = std::mem::replace(&mut shape.path, path);
+                Ok(Command::SetShapePath { id, path: old })
+            }
             Command::InsertLayer { index, layer } => {
                 let index = index.unwrap_or(doc.layers.len());
                 if index > doc.layers.len() {
@@ -193,12 +204,12 @@ impl Command {
 mod tests {
     use super::*;
     use crate::document::Color;
-    use kurbo::{Rect, Shape as _, Vec2};
+    use kurbo::{Rect, Vec2};
 
     fn rect_shape(doc: &mut Document) -> Shape {
         Shape {
             id: doc.new_shape_id(),
-            path: Rect::new(0.0, 0.0, 10.0, 10.0).to_path(0.1),
+            path: VectorPath::rect(Rect::new(0.0, 0.0, 10.0, 10.0)),
             transform: Affine::IDENTITY,
             style: Style::default(),
         }

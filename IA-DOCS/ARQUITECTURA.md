@@ -36,7 +36,8 @@ src/
   chat_panel.rs   panel derecho del chat de IA (placeholder)
   modes/
     mod.rs        íconos de modo, botón de herramienta con tooltip+atajo
-    draw/         herramientas, gestos, panel lateral (Estilo, Capas), overlay
+    draw/         herramientas (Selección, Editar nodos, Pluma, Rectángulo, Elipse),
+                  gestos, panel lateral (Pluma/Nodo, Estilo, Capas), overlay
     bones.rs      placeholder
     timeline.rs   placeholder + área de línea de tiempo
 ```
@@ -61,9 +62,15 @@ herramientas (tool use) del chat de cada panel. Lo que haga la IA queda en el hi
 ```
 Document { width, height, background, layers, next_id }
  └─ Layer { id, name, visible, locked, shapes }   (orden: abajo → arriba)
-     └─ Shape { id, path: BezPath, transform: Affine, style }
+     └─ Shape { id, path: VectorPath, transform: Affine, style }
+         ├─ VectorPath { nodes: Vec<Node>, closed }
+         │   └─ Node { point, handle_in: Vec2, handle_out: Vec2, kind: Corner|Smooth|Symmetric }
          └─ Style { fill: Option<Color>, stroke: Option<StrokeStyle> }
 ```
+- `VectorPath` es el formato propio (`aia-core/src/path.rs`); se convierte a `kurbo::BezPath`
+  solo para render y hit-testing. Las manijas son relativas al nodo (`Vec2::ZERO` = sin manija),
+  así mover un nodo arrastra sus manijas. `Node::set_handle` aplica la restricción del tipo.
+- Los nodos explícitos son la base para que los huesos deformen nodos con pesos.
 - La transformación está separada del path para que los huesos puedan deformar
   los puntos de control sin perder la geometría original.
 - `Color` es RGBA8 sRGB sin premultiplicar (propio, no depende de peniko).

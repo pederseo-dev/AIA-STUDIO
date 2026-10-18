@@ -2,8 +2,8 @@
 //!
 //! No depende de la UI: la app registra la textura resultante donde la necesite.
 
-use aia_core::kurbo::{Affine, Point, Rect, Stroke, Vec2};
-use aia_core::{Color, Document, Shape, ShapeId};
+use aia_core::kurbo::{Affine, BezPath, Circle, Line, Point, Rect, Stroke, Vec2};
+use aia_core::{Color, Document, Shape, ShapeId, VectorPath};
 use vello::peniko::{self, Fill};
 use vello::{AaConfig, AaSupport, RenderParams, Renderer, RendererOptions};
 
@@ -60,10 +60,24 @@ impl Camera {
 pub struct Overlay<'a> {
     /// Transformación provisional (por ejemplo, mientras se arrastra) de algunas formas.
     pub moving: Option<(&'a [ShapeId], Affine)>,
+    /// Trazado provisional de una forma existente (edición de nodos en curso).
+    pub edited: Option<(ShapeId, &'a VectorPath)>,
     /// Forma que se está creando con una herramienta.
     pub preview: Option<&'a Shape>,
     /// Formas seleccionadas: se dibuja su caja envolvente.
     pub selection: &'a [ShapeId],
+    /// Línea guía fina (por ejemplo, el tramo elástico de la pluma), en coordenadas del documento.
+    pub guide: Option<&'a BezPath>,
+    /// Nodos y manijas visibles para editar.
+    pub nodes: Option<NodeOverlay<'a>>,
+}
+
+/// Nodos de un trazado a mostrar. Las manijas se ven solo en el nodo seleccionado.
+pub struct NodeOverlay<'a> {
+    pub path: &'a VectorPath,
+    /// Del espacio local del trazado al documento.
+    pub transform: Affine,
+    pub selected: Option<usize>,
 }
 
 const WORKSPACE_BG: peniko::Color = peniko::Color::from_rgb8(48, 48, 52);
@@ -73,14 +87,42 @@ fn color(c: Color) -> peniko::Color {
     peniko::Color::from_rgba8(c.r, c.g, c.b, c.a)
 }
 
-fn draw_shape(scene: &mut Scene, shape: &Shape, transform: Affine) {
+fn draw_shape(scene: &mut Scene, shape: &Shape, path: &VectorPath, transform: Affine) {
     let transform = transform * shape.transform;
+    let path = path.to_bezpath();
     if let Some(fill) = shape.style.fill {
-        scene.fill(Fill::NonZero, transform, color(fill), None, &shape.path);
+        scene.fill(Fill::NonZero, transform, color(fill), None, &path);
     }
     if let Some(stroke) = shape.style.stroke {
         let style = Stroke::new(stroke.width);
-        scene.stroke(&style, transform, color(stroke.color), None, &shape.path);
+        scene.stroke(&style, transform, color(stroke.color), None, &path);
+    }
+}
+
+/// Nodos como cuadrados y manijas como círculos, en espacio de pantalla.
+fn draw_nodes(scene: &mut Scene, nodes: &NodeOverlay, view: Affine, scale: f64) {
+    let to_screen = view * nodes.transform;
+    let line = Stroke::new(scale);
+    let half = 3.5 * scale;
+    for (i, node) in nodes.path.nodes.iter().enumerate() {
+        let p = to_screen * node.point;
+        let selected = nodes.selected == Some(i);
+        if selected {
+            for handle in [node.handle_in, node.handle_out] {
+                if handle == Vec2::ZERO {
+                    continue;
+                }
+                let h = to_screen * (node.point + handle);
+                scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &Line::new(p, h));
+                let dot = Circle::new(h, half);
+                scene.fill(Fill::NonZero, Affine::IDENTITY, peniko::Color::WHITE, None, &dot);
+                scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &dot);
+            }
+        }
+        let square = Rect::from_center_size(p, (half * 2.0, half * 2.0));
+        let fill = if selected { SELECTION } else { peniko::Color::WHITE };
+        scene.fill(Fill::NonZero, Affine::IDENTITY, fill, None, &square);
+        scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &square);
     }
 }
 
@@ -99,12 +141,20 @@ pub fn build_scene(scene: &mut Scene, doc: &Document, camera: &Camera, overlay: 
                 Some((ids, transform)) if ids.contains(&shape.id) => transform,
                 _ => Affine::IDENTITY,
             };
-            draw_shape(scene, shape, view * extra);
+            let path = match overlay.edited {
+                Some((id, path)) if id == shape.id => path,
+                _ => &shape.path,
+            };
+            draw_shape(scene, shape, path, view * extra);
         }
     }
 
     if let Some(preview) = overlay.preview {
-        draw_shape(scene, preview, view);
+        draw_shape(scene, preview, &preview.path, view);
+    }
+
+    if let Some(guide) = overlay.guide {
+        scene.stroke(&Stroke::new(scale), Affine::IDENTITY, SELECTION, None, &(view * guide.clone()));
     }
 
     // La selección se dibuja en espacio de pantalla para que el grosor no dependa del zoom.
@@ -119,6 +169,10 @@ pub fn build_scene(scene: &mut Scene, doc: &Document, camera: &Camera, overlay: 
         }
         let screen = view.transform_rect_bbox(bounds).inflate(2.0 * scale, 2.0 * scale);
         scene.stroke(&selection_stroke, Affine::IDENTITY, SELECTION, None, &screen);
+    }
+
+    if let Some(nodes) = &overlay.nodes {
+        draw_nodes(scene, nodes, view, scale);
     }
 }
 

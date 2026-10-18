@@ -1,3 +1,6 @@
+// En release no se abre una consola junto a la ventana (en debug sí, para ver los logs).
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod app;
 mod canvas;
 mod chat_panel;

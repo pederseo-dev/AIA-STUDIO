@@ -44,3 +44,25 @@ cambian entre versiones:
 - Bug de `with_maximized` en Windows: diagnosticado comparando `GetClientRect`/`PrintWindow`
   con una captura de pantalla (Win32 vía PowerShell).
 - Ramer-Douglas-Peucker y Catmull-Rom → Bézier: se evaluaron para el lápiz (descartado).
+
+## Investigación de apps de referencia (2026-10-17)
+
+Para debatir las opciones faltantes del modo Draw.
+
+- **Moho (Lost Marble)**
+  - Manual, herramientas de dibujo: https://www.lostmarble.com/moho/manual/draw_tools.html
+    (Select/Translate/Scale/Rotate Points, Add Point, Delete Edge, Curvature, Magnet, Freehand,
+    Rectangle, Oval, Arrow, Shear, Perspective, Bend, Noise; botones Peak/Smooth y Flip).
+  - Manual, herramientas de relleno: https://www.lostmarble.com/moho/manual/fill_tools.html
+    (Select/Create/Delete Shape, Line Width por punto, Hide Edge, Raise/Lower Shape).
+    Moho separa geometría (puntos y curvas compartidos) de los rellenos/contornos.
+  - Novedades de Moho 14: https://moho.lostmarble.com/blogs/news/moho-14-the-future-is-2d y
+    https://mohoanimation.com/pages/features (Liquid Shapes: unir/restar/intersectar/mezclar;
+    Freehand, Blob Brush y Eraser renovados; Multi-Stroke Fill; Connect and Create).
+- **LoongBones** (animación esquelética 2D con asistente de IA; documentación también en dragonbones.cn)
+  - Documentación del editor: https://www.loongbones.com/doc/en/editor/loongbones
+    (huesos, slots, imágenes, mallas con pesos, shapes, máscaras, deformadores de malla,
+    restricciones IK/transform/path/física, Dope Sheet, curvas, importación PSD).
+  - Asistente de IA: https://www.loongbones.app/doc/editor/ui-ai (genera animaciones desde lenguaje natural).
+- **DragonBones Pro 5.6** (antecesor): ficha en https://www.majorgeeks.com/files/details/dragonbones_pro.html
+  (mallas, FFD, skinning, IK, editor de curvas, papel cebolla). Fuente de terceros.

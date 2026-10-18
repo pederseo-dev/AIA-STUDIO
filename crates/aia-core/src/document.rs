@@ -1,8 +1,10 @@
-use kurbo::{Affine, BezPath, Point, Rect, Shape as _};
+use kurbo::{Affine, Point, Rect, Shape as _};
 use serde::{Deserialize, Serialize};
 
+use crate::path::VectorPath;
+
 /// Versión del formato de archivo `.aia`.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ShapeId(pub u64);
@@ -64,14 +66,14 @@ impl Default for Style {
     }
 }
 
-/// Una forma vectorial: un path Bézier en coordenadas locales más su transformación.
+/// Una forma vectorial: un trazado con nodos en coordenadas locales más su transformación.
 ///
-/// La transformación queda separada del path para que, más adelante, los huesos
-/// puedan deformar los puntos de control sin perder la geometría original.
+/// La transformación queda separada del trazado para que, más adelante, los huesos
+/// puedan deformar los nodos sin perder la geometría original.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Shape {
     pub id: ShapeId,
-    pub path: BezPath,
+    pub path: VectorPath,
     pub transform: Affine,
     pub style: Style,
 }
@@ -79,7 +81,7 @@ pub struct Shape {
 impl Shape {
     /// Caja envolvente en coordenadas del documento (incluye el grosor del trazo).
     pub fn bounds(&self) -> Rect {
-        let rect = (self.transform * self.path.clone()).bounding_box();
+        let rect = (self.transform * self.path.to_bezpath()).bounding_box();
         match self.style.stroke {
             Some(stroke) => rect.inflate(stroke.width / 2.0, stroke.width / 2.0),
             None => rect,
@@ -93,15 +95,11 @@ impl Shape {
             return false;
         }
         let local = self.transform.inverse() * point;
-        if self.style.fill.is_some() && self.path.contains(local) {
+        if self.style.fill.is_some() && self.path.to_bezpath().contains(local) {
             return true;
         }
         let half_width = self.style.stroke.map_or(0.0, |s| s.width / 2.0);
-        let reach = half_width + tolerance;
-        self.path.segments().any(|seg| {
-            use kurbo::ParamCurveNearest;
-            seg.nearest(local, 0.1).distance_sq <= reach * reach
-        })
+        self.path.nearest_segment(local, half_width + tolerance).is_some()
     }
 }
 
