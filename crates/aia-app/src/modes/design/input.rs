@@ -1,27 +1,33 @@
-//! Interpretación del mouse sobre el canvas para cada herramienta del modo Draw.
+//! Mouse input on the canvas for each Design mode tool.
 
-use aia_core::kurbo::{Point, Rect, Vec2};
-use aia_core::{Command, Editor, Handle, Node, NodeKind, Shape, ShapeId, VectorPath};
+use aia_core::kurbo::{Point, Rect};
+use aia_core::{Command, CurveNode, Editor, Handle, HandleMode, MeshPoint, PointId};
 use aia_render::{BoxHandle, box_handles};
 use eframe::egui;
 
-use super::tools::{self, Gesture, NodeTarget, PenPath, Tool};
-use super::{DesignMode, HIT_TOLERANCE};
+use super::tools::{self, Drag, Gesture, Tool};
+use super::{BoxIds, DesignMode, Space};
 use crate::canvas::CanvasView;
 
-/// Arrastre mínimo (en puntos de pantalla) para que la pluma cree una curva.
-const PEN_DRAG_THRESHOLD: f64 = 2.0;
-/// Radio de impacto de las manijas de la caja de transformación, en puntos de pantalla.
+/// Hit radius of the transform box handles, in screen points.
 const BOX_HANDLE_RADIUS: f64 = 7.0;
+/// Minimum drag (in screen points) to create something.
+const MIN_DRAG: f64 = 2.0;
+
+/// Selection modifiers: Shift adds, Alt removes.
+#[derive(Clone, Copy)]
+struct Modifiers {
+    shift: bool,
+    alt: bool,
+}
 
 impl DesignMode {
     pub fn cursor(&self, view: &CanvasView, editor: &Editor, hover: Option<egui::Pos2>) -> egui::CursorIcon {
         if view.panning {
             return egui::CursorIcon::Grab;
         }
-        if self.tool == Tool::Select
-            && let Some(pos) = hover
-            && let Some((handle, _)) = self.hit_box_handle(view, editor, pos)
+        if let Some(pos) = hover
+            && let Some(handle) = self.hit_box_handle(view, editor, pos)
         {
             return match handle {
                 BoxHandle::Corner(0 | 2) => egui::CursorIcon::ResizeNwSe,
@@ -31,10 +37,11 @@ impl DesignMode {
                 BoxHandle::Rotate => egui::CursorIcon::Grab,
             };
         }
-        if self.tool.creates_shapes() {
-            egui::CursorIcon::Crosshair
-        } else {
-            egui::CursorIcon::Default
+        match self.tool {
+            Tool::AddPoint | Tool::DrawShape | Tool::SetOrigin => egui::CursorIcon::Crosshair,
+            Tool::TransformPoints | Tool::TransformLayer => egui::CursorIcon::Move,
+            Tool::Curvature => egui::CursorIcon::ResizeHorizontal,
+            _ => egui::CursorIcon::Default,
         }
     }
 
@@ -42,408 +49,559 @@ impl DesignMode {
         if view.panning {
             return;
         }
+        let Some(space) = self.space(editor, view) else { return };
+        let mods = ui.input(|i| Modifiers {
+            shift: i.modifiers.shift,
+            alt: i.modifiers.alt,
+        });
+        let press = ui.input(|i| i.pointer.press_origin()).map(|p| view.to_doc(p));
+        let pointer = response.interact_pointer_pos().map(|p| view.to_doc(p));
+        let started = response.drag_started_by(egui::PointerButton::Primary);
+        let dragged = response.dragged_by(egui::PointerButton::Primary);
+
+        // Update the current point of any gesture in progress.
+        if dragged && let Some(current) = pointer {
+            self.drag_to(current, &space, mods);
+        }
+
         match self.tool {
-            Tool::Select => self.select_input(ui, response, view, editor),
-            Tool::EditNodes => self.edit_input(ui, response, view, editor),
-            Tool::Pen => self.pen_input(ui, response, view, editor),
-            Tool::Rectangle | Tool::Ellipse => self.box_input(ui, response, view, editor),
+            Tool::SelectPoints | Tool::CreateShape => {
+                if response.clicked()
+                    && let Some(p) = pointer
+                {
+                    self.click_points(editor, &space, p, mods);
+                }
+                if started && let Some(start) = press {
+                    if !mods.shift && !mods.alt {
+                        self.points.clear();
+                    }
+                    self.gesture = Gesture::Marquee { start, current: start };
+                }
+            }
+            Tool::TransformPoints => {
+                if started && let Some(start) = press {
+                    self.start_points_drag(view, editor, &space, start);
+                }
+            }
+            Tool::AddPoint => {
+                if response.clicked()
+                    && let Some(p) = pointer
+                {
+                    self.insert_point_on_curve(editor, &space, p);
+                }
+                if started && let Some(start) = press {
+                    self.start_add_point(editor, &space, start);
+                }
+            }
+            Tool::Curvature => {
+                if response.clicked()
+                    && let Some(p) = pointer
+                {
+                    self.click_points(editor, &space, p, mods);
+                }
+                if started && let Some(start) = press {
+                    self.start_curvature(editor, &space, start);
+                }
+            }
+            Tool::DrawShape => {
+                if started
+                    && let Some(start) = press
+                    && self.check_editable(editor)
+                {
+                    self.gesture = Gesture::DrawShape { start, current: start };
+                }
+            }
+            Tool::DeleteEdge => {
+                if response.clicked()
+                    && let Some(p) = pointer
+                {
+                    self.delete_edge_at(editor, &space, p);
+                }
+            }
+            Tool::SelectShape => {
+                if response.clicked()
+                    && let Some(p) = pointer
+                {
+                    self.click_shape(editor, &space, p, mods);
+                }
+            }
+            Tool::TransformLayer => {
+                if started
+                    && let Some(start) = press
+                    && self.check_editable(editor)
+                {
+                    self.start_layer_drag(view, editor, &space, start);
+                }
+            }
+            Tool::SetOrigin => {
+                if response.clicked()
+                    && let Some(p) = pointer
+                {
+                    self.set_origin_at(editor, &space, p);
+                }
+            }
+        }
+
+        if response.drag_stopped() {
+            self.finish_gesture(editor, view, &space, mods);
         }
     }
 
-    // ---- Selección ------------------------------------------------------------------------
+    fn drag_to(&mut self, current: Point, space: &Space, mods: Modifiers) {
+        match &mut self.gesture {
+            Gesture::Marquee { current: c, .. }
+            | Gesture::Points { current: c, .. }
+            | Gesture::Curvature { current: c, .. }
+            | Gesture::DrawShape { current: c, .. }
+            | Gesture::Layer { current: c, .. } => *c = current,
+            Gesture::BezierHandle { curve, node, handle, mesh } => {
+                let local = space.to_layer * current;
+                let Some(c) = mesh.curves.iter().position(|c| c.id == *curve) else { return };
+                let Some(pos) = mesh.pos(mesh.curves[c].nodes[*node].point) else { return };
+                let n = &mut mesh.curves[c].nodes[*node];
+                if mods.alt {
+                    // Alt breaks the alignment: the handle becomes a corner.
+                    n.mode = HandleMode::Corner;
+                }
+                n.set_handle(*handle, local - pos);
+            }
+            Gesture::AddPoint { mesh, point, anchor, .. } => {
+                let mut local = space.to_layer * current;
+                if mods.shift && let Some((_, a)) = anchor {
+                    local = tools::snap_45(*a, local);
+                }
+                if let Some(p) = mesh.point_mut(*point) {
+                    p.pos = local;
+                }
+            }
+            Gesture::None => {}
+        }
+    }
 
-    /// Manija de la caja de transformación bajo `pos`, con la caja en coordenadas del documento.
-    fn hit_box_handle(&self, view: &CanvasView, editor: &Editor, pos: egui::Pos2) -> Option<(BoxHandle, Rect)> {
-        let bounds = self.selection_bounds(editor)?;
+    fn finish_gesture(&mut self, editor: &mut Editor, view: &CanvasView, space: &Space, mods: Modifiers) {
+        let gesture = std::mem::take(&mut self.gesture);
+        self.finish(gesture, editor, view, space, mods);
+        self.weld_requested = false;
+    }
+
+    fn finish(&mut self, gesture: Gesture, editor: &mut Editor, view: &CanvasView, space: &Space, mods: Modifiers) {
+        match gesture {
+            Gesture::Marquee { start, current } => {
+                let rect = Rect::from_points(start, current);
+                let Some(mesh) = self.active_mesh(editor) else { return };
+                let hits: Vec<PointId> = mesh
+                    .points()
+                    .iter()
+                    .filter(|p| rect.contains(space.to_doc * p.pos))
+                    .map(|p| p.id)
+                    .collect();
+                self.apply_point_selection(hits, mods, true);
+            }
+            Gesture::Points {
+                drag,
+                bounds,
+                start,
+                current,
+            } => {
+                let transform = tools::box_transform(drag, bounds, start, current, mods.shift, mods.alt);
+                // Dropping a single point onto another one welds them (Auto Weld or <enter>).
+                if drag == Drag::Move
+                    && let [moving] = self.points[..]
+                    && let Some(mut mesh) = self.transformed_mesh(editor, transform)
+                    && let Some(target) = self.weld_target(&mesh, moving, None, space.tolerance)
+                    && self.check_editable(editor)
+                    && self.weld_points(editor, &mut mesh, moving, target)
+                {
+                    self.commit_mesh(editor, mesh);
+                    self.points = vec![target];
+                    return;
+                }
+                self.transform_points(editor, transform, None);
+            }
+            Gesture::BezierHandle { curve, mesh, .. } => {
+                if let (Some(layer), Some(curve)) = (self.active_layer, mesh.curve(curve).cloned()) {
+                    self.execute(editor, Command::SetCurve { layer, curve });
+                }
+            }
+            Gesture::Curvature { start, current } => {
+                if let Some(mesh) = self.curved_mesh(editor, tools::curvature_delta(start, current, view.camera.zoom)) {
+                    self.commit_mesh(editor, mesh);
+                }
+            }
+            Gesture::AddPoint {
+                mut mesh,
+                point,
+                curve,
+                anchor,
+            } => {
+                let Some(pos) = mesh.pos(point) else { return };
+                // A click without dragging from an end or in empty space creates nothing.
+                if let Some((_, a)) = anchor
+                    && (space.to_doc * pos).distance(space.to_doc * a) * view.camera.zoom < MIN_DRAG
+                {
+                    return;
+                }
+                // Auto Weld: dropping onto another point joins it.
+                let target = self.weld_target(&mesh, point, anchor.map(|(id, _)| id), space.tolerance);
+                let selected = match target {
+                    Some(t) if self.weld_points(editor, &mut mesh, point, t) => t,
+                    _ => point,
+                };
+                let shape = editor.new_shape_id();
+                self.auto_shape(&mut mesh, curve, shape);
+                let created = mesh.shape(shape).is_some();
+                self.commit_mesh(editor, mesh);
+                self.points = vec![selected];
+                if created {
+                    self.shapes = vec![shape];
+                }
+            }
+            Gesture::DrawShape { start, current } => {
+                let rect = tools::drag_rect(start, current, mods.shift, mods.alt);
+                let min = MIN_DRAG / view.camera.zoom;
+                if rect.width() < min || rect.height() < min {
+                    return;
+                }
+                let Some(mut mesh) = self.active_mesh(editor).cloned() else { return };
+                let ids = BoxIds {
+                    points: [(); 4].map(|_| editor.new_point_id()),
+                    curve: editor.new_curve_id(),
+                    shape: editor.new_shape_id(),
+                };
+                self.add_box(&mut mesh, space, rect, &ids);
+                let created = mesh.shape(ids.shape).is_some();
+                self.commit_mesh(editor, mesh);
+                self.points = ids.points.to_vec();
+                self.shapes = if created { vec![ids.shape] } else { Vec::new() };
+            }
+            Gesture::Layer {
+                drag,
+                original,
+                origin,
+                start,
+                current,
+            } => {
+                let to_parent = editor.doc().parent_transform(space.layer).unwrap_or_default().inverse();
+                let transform = tools::layer_drag(drag, original, origin, to_parent, start, current, mods.shift);
+                if transform != original {
+                    self.execute(editor, Command::SetLayerTransform { id: space.layer, transform });
+                }
+            }
+            Gesture::None => {}
+        }
+    }
+
+    // ---- Point selection --------------------------------------------------------------
+
+    /// Click: a point, the whole curve under the mouse, or all the points of a fill.
+    fn click_points(&mut self, editor: &Editor, space: &Space, p: Point, mods: Modifiers) {
+        let Some(mesh) = self.active_mesh(editor) else { return };
+        let local = space.to_layer * p;
+        let hits = if let Some(point) = mesh.nearest_point(local, space.tolerance) {
+            vec![point]
+        } else if let Some((curve, _, _)) = mesh.nearest_segment(local, space.tolerance) {
+            mesh.curve(curve).map(|c| c.nodes.iter().map(|n| n.point).collect()).unwrap_or_default()
+        } else if let Some(shape) = mesh.shape_at(local, space.tolerance).and_then(|id| mesh.shape(id)) {
+            mesh.shape_points(shape)
+        } else {
+            Vec::new()
+        };
+        self.apply_point_selection(hits, mods, false);
+    }
+
+    /// Shift adds, Alt removes, no modifier replaces. `keep` = do not clear first (the marquee already did).
+    fn apply_point_selection(&mut self, hits: Vec<PointId>, mods: Modifiers, keep: bool) {
+        if mods.alt {
+            self.points.retain(|p| !hits.contains(p));
+            return;
+        }
+        if !mods.shift && !keep {
+            self.points.clear();
+        }
+        for id in hits {
+            if !self.points.contains(&id) {
+                self.points.push(id);
+            }
+        }
+    }
+
+    // ---- Transform points ---------------------------------------------------------------
+
+    /// Transform box handle (of the points or the layer) under `pos`.
+    fn hit_box_handle(&self, view: &CanvasView, editor: &Editor, pos: egui::Pos2) -> Option<BoxHandle> {
+        let bounds = match self.tool {
+            Tool::TransformPoints if self.points.len() >= 2 => self.points_bounds(editor)?,
+            Tool::TransformLayer => Self::layer_bounds(editor, self.active_layer?)?,
+            _ => return None,
+        };
         let screen = view.camera.doc_to_screen().transform_rect_bbox(bounds);
         let local = view.to_local(pos);
         box_handles(screen)
             .into_iter()
             .find(|(_, p)| p.distance(local) <= BOX_HANDLE_RADIUS)
-            .map(|(handle, _)| (handle, bounds))
+            .map(|(handle, _)| handle)
     }
 
-    fn select_input(&mut self, ui: &mut egui::Ui, response: &egui::Response, view: &CanvasView, editor: &mut Editor) {
-        let (shift, alt) = ui.input(|i| (i.modifiers.shift, i.modifiers.alt));
-        let tolerance = HIT_TOLERANCE / view.camera.zoom;
-
-        if response.clicked()
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            let hit = editor.doc().hit_test(view.to_doc(pos), tolerance);
-            self.click_select(hit, shift, editor);
-        }
-
-        if response.drag_started_by(egui::PointerButton::Primary)
-            && let Some(origin) = ui.input(|i| i.pointer.press_origin())
-        {
-            let start = view.to_doc(origin);
-            self.gesture = if let Some((handle, bounds)) = self.hit_box_handle(view, editor, origin) {
-                Gesture::Transform {
-                    handle,
-                    bounds,
-                    start,
-                    current: start,
+    /// Visible Bézier handle under `p`: (curve, node, which).
+    fn hit_bezier_handle(&self, editor: &Editor, space: &Space, p: Point) -> Option<(usize, usize, Handle)> {
+        let mesh = self.active_mesh(editor)?;
+        for (ci, curve) in mesh.curves.iter().enumerate() {
+            for (ni, node) in curve.nodes.iter().enumerate() {
+                if !self.points.contains(&node.point) {
+                    continue;
                 }
-            } else if let Some(id) = editor.doc().hit_test(start, tolerance) {
-                if !self.selection.contains(&id) {
-                    self.click_select(Some(id), shift, editor);
-                }
-                Gesture::Move { start, current: start }
-            } else {
-                if !shift {
-                    self.selection.clear();
-                }
-                Gesture::Marquee { start, current: start }
-            };
-        }
-
-        if response.dragged_by(egui::PointerButton::Primary)
-            && let Some(pos) = response.interact_pointer_pos()
-            && let Gesture::Move { current, .. } | Gesture::Transform { current, .. } | Gesture::Marquee { current, .. } =
-                &mut self.gesture
-        {
-            *current = view.to_doc(pos);
-        }
-
-        if response.drag_stopped() {
-            match std::mem::take(&mut self.gesture) {
-                Gesture::Move { start, current } => {
-                    self.transform_selection(editor, aia_core::kurbo::Affine::translate(current - start));
-                }
-                Gesture::Transform {
-                    handle,
-                    bounds,
-                    start,
-                    current,
-                } => {
-                    let transform = tools::box_transform(handle, bounds, start, current, shift, alt);
-                    self.transform_selection(editor, transform);
-                }
-                Gesture::Marquee { start, current } => {
-                    let rect = Rect::from_points(start, current);
-                    let hits = shapes_in_rect(editor, rect);
-                    for id in hits {
-                        if !self.selection.contains(&id) {
-                            self.selection.push(id);
-                        }
+                let pos = mesh.pos(node.point)?;
+                let (h_in, h_out) = mesh.handles(curve, ni);
+                for (handle, offset) in [(Handle::Out, h_out), (Handle::In, h_in)] {
+                    if offset.hypot() > 0.0 && (space.to_doc * (pos + offset)).distance(p) <= space.doc_tolerance {
+                        return Some((ci, ni, handle));
                     }
                 }
-                _ => {}
             }
         }
+        None
     }
 
-    fn click_select(&mut self, hit: Option<ShapeId>, shift: bool, editor: &Editor) {
-        match hit {
-            Some(id) if shift => {
-                if let Some(i) = self.selection.iter().position(|s| *s == id) {
-                    self.selection.remove(i);
-                } else {
-                    self.selection.push(id);
-                }
-            }
-            Some(id) => self.selection = vec![id],
-            None if !shift => self.selection.clear(),
-            None => {}
-        }
-        self.nodes.clear();
-        self.load_style_from_selection(editor);
-    }
-
-    /// El panel de estilo muestra el estilo de la última forma elegida.
-    pub(super) fn load_style_from_selection(&mut self, editor: &Editor) {
-        if let Some(shape) = self.selection.last().and_then(|id| editor.doc().shape(*id)) {
-            self.style = shape.style;
-        }
-    }
-
-    // ---- Rectángulo y elipse --------------------------------------------------------------
-
-    fn box_input(&mut self, ui: &mut egui::Ui, response: &egui::Response, view: &CanvasView, editor: &mut Editor) {
-        let (shift, alt) = ui.input(|i| (i.modifiers.shift, i.modifiers.alt));
-
-        if response.drag_started_by(egui::PointerButton::Primary)
-            && let Some(origin) = ui.input(|i| i.pointer.press_origin())
-            && self.active_layer_editable(editor)
-        {
-            let start = view.to_doc(origin);
-            self.gesture = Gesture::Box { start, current: start };
-        }
-
-        if response.dragged_by(egui::PointerButton::Primary)
-            && let Some(pos) = response.interact_pointer_pos()
-            && let Gesture::Box { current, .. } = &mut self.gesture
-        {
-            *current = view.to_doc(pos);
-        }
-
-        if response.drag_stopped()
-            && let Gesture::Box { start, current } = std::mem::take(&mut self.gesture)
-        {
-            let rect = tools::drag_rect(start, current, shift, alt);
-            let min_size = 2.0 / view.camera.zoom;
-            if rect.width() >= min_size && rect.height() >= min_size {
-                self.insert_shape(editor, tools::box_path(self.tool, rect), self.tool.shape_name());
-            }
-        }
-    }
-
-    // ---- Pluma ----------------------------------------------------------------------------
-
-    fn pen_input(&mut self, ui: &mut egui::Ui, response: &egui::Response, view: &CanvasView, editor: &mut Editor) {
-        let (pressed, down, double, pos, alt, shift) = ui.input(|i| {
-            (
-                i.pointer.primary_pressed(),
-                i.pointer.primary_down(),
-                i.pointer.button_double_clicked(egui::PointerButton::Primary),
-                i.pointer.interact_pos(),
-                i.modifiers.alt,
-                i.modifiers.shift,
-            )
-        });
-        let Some(pos) = pos else { return };
-        let mut p = view.to_doc(pos);
-        let tolerance = HIT_TOLERANCE / view.camera.zoom;
-
-        if pressed && response.contains_pointer() {
-            if self.pen.is_none() && !self.active_layer_editable(editor) {
-                return;
-            }
-            let pen = self.pen.get_or_insert_with(|| PenPath {
-                path: VectorPath::default(),
-                dragging: None,
-            });
-            let nodes = &mut pen.path.nodes;
-            if nodes.len() >= 2 && nodes[0].point.distance(p) <= tolerance {
-                pen.path.closed = true;
-                pen.dragging = Some(0);
-            } else {
-                if shift && let Some(last) = nodes.last() {
-                    p = tools::snap_45(last.point, p);
-                }
-                nodes.push(Node::corner(p));
-                pen.dragging = Some(nodes.len() - 1);
-            }
-        }
-
-        if down
-            && let Some(pen) = &mut self.pen
-            && let Some(index) = pen.dragging
-        {
-            let node = &mut pen.path.nodes[index];
-            let drag = p - node.point;
-            if drag.hypot() * view.camera.zoom >= PEN_DRAG_THRESHOLD {
-                if alt {
-                    // Rompe la simetría: solo cambia la manija de salida.
-                    node.kind = NodeKind::Corner;
-                    node.handle_out = drag;
-                } else {
-                    *node = Node::symmetric(node.point, drag);
-                }
-            }
-        }
-
-        // Se mira el estado del botón (no el evento de soltar), que es más confiable:
-        // si un evento de soltar se pierde, el arrastre igual termina.
-        if !down
-            && let Some(pen) = &mut self.pen
-            && pen.dragging.is_some()
-        {
-            pen.dragging = None;
-            if pen.path.closed {
-                self.finish_pen(editor);
-                return;
-            }
-        }
-
-        if double && let Some(pen) = &mut self.pen {
-            // El doble clic agregó dos nodos casi en el mismo lugar: se quita el último.
-            let nodes = &mut pen.path.nodes;
-            if nodes.len() >= 2 && nodes[nodes.len() - 1].point.distance(nodes[nodes.len() - 2].point) <= tolerance {
-                nodes.pop();
-            }
-            self.finish_pen(editor);
-        }
-    }
-
-    // ---- Editar nodos ---------------------------------------------------------------------
-
-    fn edit_input(&mut self, ui: &mut egui::Ui, response: &egui::Response, view: &CanvasView, editor: &mut Editor) {
-        let (shift, alt) = ui.input(|i| (i.modifiers.shift, i.modifiers.alt));
-        let tolerance = HIT_TOLERANCE / view.camera.zoom;
-
-        if response.clicked()
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            self.edit_click(view.to_doc(pos), tolerance, shift, editor);
-        }
-
-        if response.drag_started_by(egui::PointerButton::Primary)
-            && let Some(origin) = ui.input(|i| i.pointer.press_origin())
-        {
-            let start = view.to_doc(origin);
-            let target = self
-                .edit_target(editor)
-                .and_then(|shape| self.hit_node(shape, start, tolerance).map(|t| (shape, t)));
-            self.gesture = match target {
-                Some((shape, target)) => {
-                    if let NodeTarget::Node(i) = target
-                        && !self.nodes.contains(&i)
-                    {
-                        if !shift {
-                            self.nodes.clear();
-                        }
-                        self.nodes.push(i);
-                    }
-                    Gesture::EditPath {
-                        shape: shape.id,
-                        target,
-                        original: shape.path.clone(),
-                        path: shape.path.clone(),
-                        start: shape.transform.inverse() * start,
-                    }
-                }
-                None => {
-                    if !shift {
-                        self.nodes.clear();
-                    }
-                    Gesture::Marquee { start, current: start }
-                }
-            };
-        }
-
-        if response.dragged_by(egui::PointerButton::Primary)
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            let doc_point = view.to_doc(pos);
-            match &mut self.gesture {
-                Gesture::Marquee { current, .. } => *current = doc_point,
-                Gesture::EditPath {
-                    shape,
-                    target,
-                    original,
-                    path,
-                    start,
-                } => {
-                    let Some(transform) = editor.doc().shape(*shape).map(|s| s.transform) else {
-                        return;
-                    };
-                    let local = transform.inverse() * doc_point;
-                    match *target {
-                        NodeTarget::Node(_) => {
-                            let delta = local - *start;
-                            for &i in &self.nodes {
-                                path.nodes[i].point = original.nodes[i].point + delta;
-                            }
-                        }
-                        NodeTarget::Handle(i, handle) => {
-                            let node = &mut path.nodes[i];
-                            if alt {
-                                node.kind = NodeKind::Corner;
-                            }
-                            node.set_handle(handle, local - node.point);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if response.drag_stopped() {
-            match std::mem::take(&mut self.gesture) {
-                Gesture::EditPath { shape, path, .. } => {
-                    if editor.doc().shape(shape).is_some_and(|s| s.path != path) {
-                        self.execute(editor, Command::SetShapePath { id: shape, path });
-                    }
-                }
-                Gesture::Marquee { start, current } => {
-                    let rect = Rect::from_points(start, current);
-                    if let Some(shape) = self.edit_target(editor) {
-                        // Con una forma en edición, el marco selecciona sus nodos.
-                        for (i, node) in shape.path.nodes.iter().enumerate() {
-                            if rect.contains(shape.transform * node.point) && !self.nodes.contains(&i) {
-                                self.nodes.push(i);
-                            }
-                        }
-                    } else if let Some(id) = shapes_in_rect(editor, rect).last() {
-                        self.selection = vec![*id];
-                        self.load_style_from_selection(editor);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Clic con Editar nodos: elige nodos, agrega un nodo sobre el trazado o cambia de forma.
-    fn edit_click(&mut self, point: Point, tolerance: f64, shift: bool, editor: &mut Editor) {
-        if let Some(shape) = self.edit_target(editor) {
-            match self.hit_node(shape, point, tolerance) {
-                Some(NodeTarget::Node(i)) => {
-                    if shift {
-                        if let Some(pos) = self.nodes.iter().position(|n| *n == i) {
-                            self.nodes.remove(pos);
-                        } else {
-                            self.nodes.push(i);
-                        }
-                    } else {
-                        self.nodes = vec![i];
-                    }
-                    return;
-                }
-                Some(NodeTarget::Handle(..)) => return,
-                None => {}
-            }
-            let local = shape.transform.inverse() * point;
-            if let Some((segment, t)) = shape.path.nearest_segment(local, tolerance) {
-                let mut path = shape.path.clone();
-                let id = shape.id;
-                let index = path.insert_node(segment, t);
-                self.nodes = vec![index];
-                self.execute(editor, Command::SetShapePath { id, path });
-                return;
-            }
-        }
-        let hit = editor.doc().hit_test(point, tolerance);
-        if hit.is_none() && !self.nodes.is_empty() {
-            // Primer clic en el vacío: suelta los nodos; el segundo, la forma.
-            self.nodes.clear();
+    fn start_points_drag(&mut self, view: &CanvasView, editor: &Editor, space: &Space, start: Point) {
+        if !self.check_editable(editor) {
             return;
         }
-        self.click_select(hit, false, editor);
+        let origin = view.camera.doc_to_screen() * start;
+        let origin = egui::pos2(origin.x as f32 + view.rect.min.x, origin.y as f32 + view.rect.min.y);
+        if let Some(handle) = self.hit_box_handle(view, editor, origin)
+            && let Some(bounds) = self.points_bounds(editor)
+        {
+            self.gesture = Gesture::Points {
+                drag: Drag::Handle(handle),
+                bounds,
+                start,
+                current: start,
+            };
+            return;
+        }
+        if self.start_bezier_drag(editor, space, start) {
+            return;
+        }
+        self.pick_points_to_move(editor, space, start);
+        if let Some(bounds) = self.points_bounds(editor) {
+            self.gesture = Gesture::Points {
+                drag: Drag::Move,
+                bounds,
+                start,
+                current: start,
+            };
+        }
     }
 
-    /// Nodo o manija bajo el punto. Las manijas solo existen en los nodos seleccionados.
-    fn hit_node(&self, shape: &Shape, point: Point, tolerance: f64) -> Option<NodeTarget> {
-        let to_doc = shape.transform;
-        for &index in &self.nodes {
-            let Some(node) = shape.path.nodes.get(index) else { continue };
-            for handle in [Handle::Out, Handle::In] {
-                let offset = node.handle(handle);
-                if offset != Vec2::ZERO && (to_doc * (node.point + offset)).distance(point) <= tolerance {
-                    return Some(NodeTarget::Handle(index, handle));
+    /// What Transform Points moves: the point under the mouse; the whole shape when grabbed from
+    /// inside its fill; otherwise the selection, or the nearest point with fewer than two selected
+    /// (as in Moho).
+    fn pick_points_to_move(&mut self, editor: &Editor, space: &Space, start: Point) {
+        let Some(mesh) = self.active_mesh(editor) else { return };
+        let local = space.to_layer * start;
+        if let Some(point) = mesh.nearest_point(local, space.tolerance) {
+            if !self.points.contains(&point) {
+                self.points = vec![point];
+            }
+        } else if let Some(shape) = mesh.shape_at(local, space.tolerance).and_then(|id| mesh.shape(id)) {
+            let points = mesh.shape_points(shape);
+            if !points.iter().all(|p| self.points.contains(p)) {
+                self.points = points;
+            }
+        } else if self.points.len() < 2 {
+            self.select_nearest_point(editor, space, start);
+        }
+    }
+
+    /// Starts dragging the visible Bezier handle under `start`, if there is one.
+    fn start_bezier_drag(&mut self, editor: &Editor, space: &Space, start: Point) -> bool {
+        if self.show_handles
+            && let Some((ci, ni, handle)) = self.hit_bezier_handle(editor, space, start)
+            && let Some(mut mesh) = self.active_mesh(editor).cloned()
+        {
+            // An auto handle becomes manual (smooth) keeping its current shape.
+            let (h_in, h_out) = mesh.handles(&mesh.curves[ci], ni);
+            let node = &mut mesh.curves[ci].nodes[ni];
+            if let HandleMode::Auto { .. } = node.mode {
+                node.mode = HandleMode::Smooth;
+                node.handle_in = h_in;
+                node.handle_out = h_out;
+            }
+            self.gesture = Gesture::BezierHandle {
+                curve: mesh.curves[ci].id,
+                node: ni,
+                handle,
+                mesh,
+            };
+            return true;
+        }
+        false
+    }
+
+    /// Selects only the point closest to `p` (at any distance).
+    fn select_nearest_point(&mut self, editor: &Editor, space: &Space, p: Point) {
+        let Some(mesh) = self.active_mesh(editor) else { return };
+        let local = space.to_layer * p;
+        let nearest = mesh
+            .points()
+            .iter()
+            .min_by(|a, b| a.pos.distance(local).total_cmp(&b.pos.distance(local)))
+            .map(|p| p.id);
+        self.points = nearest.into_iter().collect();
+    }
+
+    // ---- Curvature ----------------------------------------------------------------------
+
+    /// Dragging a visible Bezier handle changes its angle and length (as in Moho); anywhere else,
+    /// the curvature. Without a selection, the point nearest the mouse is the one that changes.
+    fn start_curvature(&mut self, editor: &Editor, space: &Space, start: Point) {
+        if !self.check_editable(editor) || self.start_bezier_drag(editor, space, start) {
+            return;
+        }
+        if self.points.is_empty() {
+            self.select_nearest_point(editor, space, start);
+        }
+        if !self.points.is_empty() {
+            self.gesture = Gesture::Curvature { start, current: start };
+        }
+    }
+
+    // ---- Add point --------------------------------------------------------------------
+
+    /// Click on a curve: inserts a point there.
+    fn insert_point_on_curve(&mut self, editor: &mut Editor, space: &Space, p: Point) {
+        let Some(mut mesh) = self.active_mesh(editor).cloned() else { return };
+        let local = space.to_layer * p;
+        if mesh.nearest_point(local, space.tolerance).is_some() {
+            return;
+        }
+        let Some((curve, segment, t)) = mesh.nearest_segment(local, space.tolerance) else { return };
+        if !self.check_editable(editor) {
+            return;
+        }
+        let id = editor.new_point_id();
+        if mesh.insert_point(curve, segment, t, id) {
+            self.commit_mesh(editor, mesh);
+            self.points = vec![id];
+        }
+    }
+
+    fn start_add_point(&mut self, editor: &mut Editor, space: &Space, start: Point) {
+        if !self.check_editable(editor) {
+            return;
+        }
+        let Some(mut mesh) = self.active_mesh(editor).cloned() else { return };
+        let local = space.to_layer * start;
+        let mode = if self.sharp_corners { HandleMode::PEAK } else { HandleMode::SMOOTH };
+        let new = editor.new_point_id();
+
+        let (curve, anchor) = if let Some(existing) = mesh.nearest_point(local, space.tolerance) {
+            let pos = mesh.pos(existing).unwrap_or(local);
+            mesh.add_point(MeshPoint::new(new, pos));
+            let node = CurveNode::new(new, mode);
+            // From the end of an open curve: extends it. From any other point: a welded branch.
+            let curve = if let Some(c) = mesh.curves.iter_mut().find(|c| c.is_endpoint(existing)) {
+                if c.nodes.last().map(|n| n.point) == Some(existing) {
+                    c.nodes.push(node);
+                } else {
+                    c.nodes.insert(0, node);
+                }
+                c.id
+            } else {
+                let id = editor.new_curve_id();
+                mesh.curves.push(aia_core::Curve {
+                    id,
+                    closed: false,
+                    nodes: vec![CurveNode::new(existing, mode), node],
+                });
+                id
+            };
+            (curve, Some((existing, pos)))
+        } else if let Some((curve, segment, t)) = mesh.nearest_segment(local, space.tolerance) {
+            // On a curve: insert the point and drag it.
+            if !mesh.insert_point(curve, segment, t, new) {
+                return;
+            }
+            (curve, None)
+        } else {
+            // In empty space: a new two-point curve.
+            let first = editor.new_point_id();
+            mesh.add_point(MeshPoint::new(first, local));
+            mesh.add_point(MeshPoint::new(new, local));
+            let id = editor.new_curve_id();
+            mesh.curves.push(aia_core::Curve {
+                id,
+                closed: false,
+                nodes: vec![CurveNode::new(first, mode), CurveNode::new(new, mode)],
+            });
+            (id, Some((first, local)))
+        };
+        self.points = vec![new];
+        self.gesture = Gesture::AddPoint {
+            mesh,
+            point: new,
+            curve,
+            anchor,
+        };
+    }
+
+    // ---- Delete edge, shapes, layer -------------------------------------------------------
+
+    fn delete_edge_at(&mut self, editor: &mut Editor, space: &Space, p: Point) {
+        let Some(mut mesh) = self.active_mesh(editor).cloned() else { return };
+        let Some((curve, segment, _)) = mesh.nearest_segment(space.to_layer * p, space.tolerance) else { return };
+        if !self.check_editable(editor) {
+            return;
+        }
+        let new_curve = editor.new_curve_id();
+        if mesh.delete_edge(curve, segment, new_curve) {
+            self.commit_mesh(editor, mesh);
+        }
+    }
+
+    fn click_shape(&mut self, editor: &Editor, space: &Space, p: Point, mods: Modifiers) {
+        let Some(mesh) = self.active_mesh(editor) else { return };
+        let hit = mesh.shape_at(space.to_layer * p, space.tolerance);
+        match hit {
+            Some(id) if mods.alt => self.shapes.retain(|s| *s != id),
+            Some(id) if mods.shift => {
+                if !self.shapes.contains(&id) {
+                    self.shapes.push(id);
                 }
             }
+            Some(id) => self.shapes = vec![id],
+            None if !mods.shift && !mods.alt => self.shapes.clear(),
+            None => {}
         }
-        shape
-            .path
-            .nodes
-            .iter()
-            .position(|n| (to_doc * n.point).distance(point) <= tolerance)
-            .map(NodeTarget::Node)
     }
-}
 
-/// Formas de capas editables cuya caja toca el rectángulo (de abajo hacia arriba).
-fn shapes_in_rect(editor: &Editor, rect: Rect) -> Vec<ShapeId> {
-    editor
-        .doc()
-        .layers
-        .iter()
-        .filter(|l| l.is_editable())
-        .flat_map(|l| &l.shapes)
-        .filter(|s| s.bounds().overlaps(rect) || rect.contains_rect(s.bounds()))
-        .map(|s| s.id)
-        .collect()
+    fn start_layer_drag(&mut self, view: &CanvasView, editor: &Editor, space: &Space, start: Point) {
+        let Some(layer) = editor.doc().layer(space.layer) else { return };
+        let screen = view.camera.doc_to_screen() * start;
+        let pos = egui::pos2(screen.x as f32 + view.rect.min.x, screen.y as f32 + view.rect.min.y);
+        let drag = self.hit_box_handle(view, editor, pos).map_or(Drag::Move, Drag::Handle);
+        self.gesture = Gesture::Layer {
+            drag,
+            original: layer.transform,
+            origin: space.to_doc * layer.origin,
+            start,
+            current: start,
+        };
+    }
+
+    /// The new origin goes under the mouse; the layer does not move on screen.
+    fn set_origin_at(&mut self, editor: &mut Editor, space: &Space, p: Point) {
+        let Some(layer) = editor.doc().layer(space.layer) else { return };
+        let origin = space.to_layer * p;
+        let transform = layer.transform.with_origin_moved(layer.origin, origin);
+        let id = space.layer;
+        if self.check_editable(editor) {
+            self.execute(
+                editor,
+                Command::Batch {
+                    commands: vec![Command::SetLayerOrigin { id, origin }, Command::SetLayerTransform { id, transform }],
+                },
+            );
+        }
+    }
 }

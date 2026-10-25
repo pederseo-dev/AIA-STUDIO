@@ -97,6 +97,42 @@ se copian como JSON (`{"aia_studio_shapes": [...]}`). Permite pegar entre ventan
 ## 2026-10-18 — Atajos de orden con RePág/AvPág/Inicio/Fin
 `Ctrl+[` / `Ctrl+]` no funcionan bien en teclados en español; se usan las teclas de Inkscape.
 
+## 2026-10-25 — Moho como referencia principal
+El usuario usó mucho Moho y lo considera el punto justo entre principiante y profesional: las
+funcionalidades más importantes se toman de ahí. Se descargaron los manuales oficiales de Moho 13.5 y se
+resumieron en [REFERENCIA-MOHO.md](REFERENCIA-MOHO.md).
+
+## 2026-10-25 — Modelo estilo Moho (revierte "nodos por forma" del 2026-10-18)
+AIA Studio será **nuestra propia versión de Moho** con chat de IA y agentes especializados por área.
+Se adopta el modelo de Moho: árbol de capas con transformación y origen, mallas de **puntos compartidos**
+(soldadura) + curvas + formas que referencian aristas, grosor por punto, y huesos que deforman puntos.
+Motivo: casi todo lo distintivo de Moho (soldadura, bordes compartidos, Hide Edge, grosor por punto,
+binding y Smart Bones) depende de que lo animado sean los puntos.
+La facilidad para la IA (motivo de la decisión anterior) se resuelve con una **capa de traducción**:
+la IA ve la escena como capas con nombre y formas en SVG, y usa herramientas de alto nivel por nombre
+que se traducen a `Batch` de comandos. Se arranca limpio (el usuario autorizó borrar lo necesario);
+sin migración de archivos (regla 7). Diseño en [MODELO-V2.md](MODELO-V2.md), pendiente de aprobación.
+
+## 2026-10-25 — Interfaz y código en inglés
+Se estandariza en inglés todo lo que se ve en la app y los comentarios del código; la documentación
+(IA-DOCS, README) sigue en español para el usuario. Las herramientas usan los nombres de Moho.
+
+## 2026-10-25 — Layout de Moho con el chat al costado
+Reemplaza el layout "estilo VS Code" con panel lateral único. Como Moho: panel Tools a la izquierda en
+grilla por secciones, barra de opciones de la herramienta arriba del canvas, Style y Layers a la derecha,
+ayuda de la herramienta en la barra de estado. El chat de IA queda como columna aparte en el extremo
+derecho (la diferencia con Moho). Se mantienen la barra de modos y los botones para ocultar paneles.
+
+## 2026-10-25 — Style edita la selección con cualquier herramienta
+Antes solo con Select Shape, y el usuario no encontraba cómo quitar el relleno o el trazo. Ahora, si hay
+formas seleccionadas, Style las edita (las recién dibujadas quedan seleccionadas) y el cambio también pasa
+a ser el valor por defecto, como en Moho. Curvature (C) se adelantó de la Etapa 2 por pedido del usuario.
+
+## 2026-10-25 — Íconos de herramientas propios, inspirados en Moho
+El usuario pidió los íconos de Moho para ubicarse. No se copian (son de Lost Marble/Smith Micro, con
+copyright): se dibujan versiones propias con trazos en `modes/design/icons.rs` (nítidas a cualquier escala,
+toman el color del tema). Empezó por las 6 herramientas principales de Draw.
+
 ## 2026-10-17 — Flujo de git
 Se trabaja directo en `main` hasta tener una base estable. El usuario dirige y es autor de
 los commits; Claude figura como `Co-Authored-By`.

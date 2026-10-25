@@ -55,6 +55,18 @@ cambian entre versiones:
   con una captura de pantalla (Win32 vía PowerShell).
 - Ramer-Douglas-Peucker y Catmull-Rom → Bézier: se evaluaron para el lápiz (descartado).
 
+## Moho como referencia principal (2026-10-25)
+
+Resumen completo en [REFERENCIA-MOHO.md](REFERENCIA-MOHO.md).
+- Manuales oficiales de Moho 13.5 (usuario y tutoriales, PDF) descargados en `IA-DOCS/fuentes/moho/`
+  junto con su texto en UTF-8 (extraído con `pdftotext -layout`). Esa carpeta no va a git (47 MB).
+  Leídos: capítulos 3–8 (herramientas), 11 (tipos de capa), 13 (estilo), 16–17 (timeline, actions),
+  20–22 (menús Dibujo/Huesos/Animación) y 27 (novedades 13.5).
+- El manual de Moho 14 es una wiki que necesita JavaScript (https://manual.lostmarble.com/); no se pudo leer.
+- API de scripting Lua (mohoscripting.com, no oficial): modelo de datos interno de Moho (`M_Mesh`,
+  `M_Point`, `M_Curve`, `M_Shape`, `M_Style`, `M_Bone`, `M_Skeleton`, `MohoLayer`, `AnimChannel`,
+  `InterpSetting`, constantes `MOHO`).
+
 ## Investigación de apps de referencia (2026-10-17)
 
 Para debatir las opciones faltantes del modo Draw.

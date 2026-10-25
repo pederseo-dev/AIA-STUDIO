@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-/// Los modos de trabajo de la aplicación:
+/// The application's work modes:
 ///
-/// - `Design`: construir el personaje (dibujo vectorial y, más adelante, huesos y pesos).
-///   Todo lo que se hace modifica la base.
-/// - `Animation`: animar; los cambios crean keyframes y nunca tocan la base.
+/// - `Design`: build the character (vector drawing and, later, bones and weights).
+///   Everything done here modifies the base.
+/// - `Animation`: animate; changes create keyframes and never touch the base.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Mode {
     #[default]
@@ -24,14 +24,14 @@ impl Mode {
 
     pub fn description(self) -> &'static str {
         match self {
-            Mode::Design => "Construir el personaje: dibujo vectorial, capas y huesos",
-            Mode::Animation => "Animar: keyframes y curvas, sin tocar la base",
+            Mode::Design => "Build the character: vector drawing, layers and bones",
+            Mode::Animation => "Animate: keyframes and curves, without touching the base",
         }
     }
 }
 
-/// Agentes de IA especializados. Cada uno tiene su propia conversación,
-/// herramientas, modelo y skills; el documento es la memoria compartida.
+/// Specialized AI agents. Each one has its own conversation, tools, model and skills;
+/// the document is the shared memory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Agent {
     Draw,
@@ -52,14 +52,14 @@ impl Agent {
 
     pub fn description(self) -> &'static str {
         match self {
-            Agent::Draw => "Crea y edita formas, estilos y capas",
-            Agent::Rigging => "Arma el esqueleto: huesos, jerarquía y pesos",
-            Agent::Animation => "Anima: poses, keyframes y curvas",
+            Agent::Draw => "Creates and edits shapes, styles and layers",
+            Agent::Rigging => "Builds the skeleton: bones, hierarchy and weights",
+            Agent::Animation => "Animates: poses, keyframes and curves",
         }
     }
 
-    /// El modo en el que el agente puede trabajar. En Animation solo trabaja el
-    /// agente de animación, así la IA tampoco puede modificar la base mientras se anima.
+    /// The mode the agent can work in. In Animation only the animation agent works, so
+    /// the AI cannot modify the base while animating either.
     pub fn mode(self) -> Mode {
         match self {
             Agent::Draw | Agent::Rigging => Mode::Design,
@@ -71,8 +71,8 @@ impl Agent {
         self.mode() == mode
     }
 
-    /// Agente sugerido para un modo cuando no hay una pista más específica
-    /// (por ejemplo, la herramienta activa).
+    /// Suggested agent for a mode when there is no more specific hint
+    /// (for example, the active tool).
     pub fn default_for(mode: Mode) -> Agent {
         match mode {
             Mode::Design => Agent::Draw,

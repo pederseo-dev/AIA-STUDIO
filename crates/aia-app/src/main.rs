@@ -1,4 +1,4 @@
-// En release no se abre una consola junto a la ventana (en debug sí, para ver los logs).
+// In release no console opens next to the window (in debug it does, to see the logs).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
@@ -33,8 +33,8 @@ fn main() -> eframe::Result {
     )
 }
 
-/// En Windows se usa DirectX 12: algunos drivers Vulkan (por ejemplo Intel UHD)
-/// se cuelgan al compilar los shaders de vello. `WGPU_BACKEND` permite forzar otro.
+/// On Windows DirectX 12 is used: some Vulkan drivers (for example Intel UHD) crash
+/// while compiling vello's shaders. `WGPU_BACKEND` forces another one.
 fn preferred_backends() -> wgpu::Backends {
     wgpu::Backends::from_env().unwrap_or(if cfg!(windows) {
         wgpu::Backends::DX12

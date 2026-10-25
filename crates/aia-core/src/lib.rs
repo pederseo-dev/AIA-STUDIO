@@ -1,21 +1,24 @@
-//! Núcleo de AIA Studio: modelo del documento, comandos y undo/redo.
+//! AIA Studio core: document model (Moho style), commands and undo/redo.
 //!
-//! No depende de UI ni de GPU. Todo cambio al documento pasa por un [`Command`],
-//! tanto si viene del usuario como (más adelante) de un agente de IA.
+//! No UI or GPU dependencies. Every change to the document goes through a [`Command`],
+//! whether it comes from the user or from an AI agent.
 
 pub mod command;
 pub mod document;
 pub mod editor;
+pub mod mesh;
 pub mod mode;
-pub mod path;
 pub mod project;
+pub mod style;
+mod topology;
 
 pub use command::{Command, CommandError};
-pub use document::{Color, Document, Layer, LayerId, Shape, ShapeId, StrokeStyle, Style};
+pub use document::{Document, Layer, LayerId, LayerKind, LayerTransform};
 pub use editor::Editor;
+pub use mesh::{Curve, CurveId, CurveNode, DEFAULT_CURVATURE, EdgeRef, Handle, HandleMode, Loop, Mesh, MeshPoint, PointId, Shape, ShapeId};
 pub use mode::{Agent, Mode};
-pub use path::{Handle, Node, NodeKind, VectorPath};
 pub use project::{ChatMessage, ChatRole, Chats};
+pub use style::{Color, StrokeStyle, Style};
 
-/// Re-export para que los demás crates usen la misma versión de kurbo.
+/// Re-exported so the other crates use the same kurbo version.
 pub use kurbo;

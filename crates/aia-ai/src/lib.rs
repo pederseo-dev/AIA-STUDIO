@@ -1,8 +1,8 @@
-//! Base de la IA de AIA Studio.
+//! AI foundation of AIA Studio.
 //!
-//! Por ahora solo define la forma de la configuración: proveedores, modelos y
-//! skills asignadas a cada agente. El chat y la ejecución de herramientas
-//! (que serán los [`aia_core::Command`] expuestos como tools) llegan después.
+//! For now it only defines the shape of the settings: providers, models and skills
+//! assigned to each agent. Chat and tool execution (high-level tools that translate
+//! into [`aia_core::Command`]s) come later.
 
 pub mod config;
 

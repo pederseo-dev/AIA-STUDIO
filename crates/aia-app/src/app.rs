@@ -16,7 +16,8 @@ const NEW: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
 const OPEN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
 const SAVE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
 const SAVE_AS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::S);
-const TOGGLE_SIDEBAR: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::B);
+const TOGGLE_TOOLS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::B);
+const TOGGLE_INSPECTOR: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::B);
 const TOGGLE_BOTTOM: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::J);
 const TOGGLE_CHAT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::ALT), Key::B);
 const TOGGLE_MODES: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::M);
@@ -30,17 +31,18 @@ fn mode_shortcut(mode: Mode) -> KeyboardShortcut {
 }
 
 const FILE_FILTER: (&str, &[&str]) = ("AIA Studio", &["aia"]);
-/// Máximo de mensajes que guarda el panel inferior.
+/// Maximum number of messages kept by the bottom panel.
 const LOG_LIMIT: usize = 200;
 
-/// Estado de la interfaz que se recuerda entre sesiones.
+/// UI state remembered between sessions.
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 struct Layout {
     mode: Mode,
     mode_bar_open: bool,
-    sidebar_open: bool,
+    tools_open: bool,
     bottom_open: bool,
+    inspector_open: bool,
     chat_open: bool,
 }
 
@@ -49,21 +51,26 @@ impl Default for Layout {
         Self {
             mode: Mode::Design,
             mode_bar_open: true,
-            sidebar_open: true,
+            tools_open: true,
             bottom_open: true,
+            inspector_open: true,
             chat_open: true,
         }
     }
 }
 
-/// Paneles que se pueden ocultar desde los botones de la esquina superior derecha.
+/// Panels that can be hidden with the buttons in the top-right corner.
 #[derive(Clone, Copy)]
 enum PanelSide {
-    /// La barra de modos (arriba).
+    /// The mode bar (top).
     Top,
+    /// Tools (left).
     Left,
     Bottom,
-    Right,
+    /// Style and Layers (right).
+    Inspector,
+    /// AI chat (far right).
+    Chat,
 }
 
 pub struct AiaApp {
@@ -73,19 +80,19 @@ pub struct AiaApp {
     design: DesignMode,
     animation: AnimationMode,
     chat: ChatPanel,
-    /// Conversaciones con cada agente; se guardan dentro del proyecto `.aia`.
+    /// Conversations with each agent; saved inside the `.aia` project.
     chats: Chats,
     file: Option<PathBuf>,
-    /// Modelo y skills de cada agente; todavía sin UI.
+    /// Model and skills of each agent; no UI yet.
     #[allow(dead_code)]
     ai_settings: AiSettings,
-    /// Mensajes para el usuario (errores y avisos). El último se ve en la barra de estado.
+    /// Messages for the user (errors and warnings). The last one shows in the status bar.
     log: Vec<String>,
     title: String,
-    /// El usuario ya confirmó cerrar sin guardar.
+    /// The user already confirmed closing without saving.
     allow_close: bool,
-    /// Maximizar en el primer frame. Hacerlo al crear la ventana deja la
-    /// superficie de render más grande que el área visible en Windows.
+    /// Maximize on the first frame. Doing it when creating the window leaves the
+    /// render surface larger than the visible area on Windows.
     maximize_pending: bool,
 }
 
@@ -96,7 +103,7 @@ impl AiaApp {
         cc.egui_ctx.set_fonts(fonts);
 
         let stored: Option<Layout> = cc.storage.and_then(|s| eframe::get_value(s, eframe::APP_KEY));
-        // En la primera ejecución se maximiza; después eframe recuerda el tamaño de la ventana.
+        // Maximize on the first run; afterwards eframe remembers the window size.
         let maximize_pending = stored.is_none();
         let layout = stored.unwrap_or_default();
 
@@ -134,9 +141,10 @@ impl AiaApp {
     fn toggle(&mut self, side: PanelSide) {
         let open = match side {
             PanelSide::Top => &mut self.layout.mode_bar_open,
-            PanelSide::Left => &mut self.layout.sidebar_open,
+            PanelSide::Left => &mut self.layout.tools_open,
             PanelSide::Bottom => &mut self.layout.bottom_open,
-            PanelSide::Right => &mut self.layout.chat_open,
+            PanelSide::Inspector => &mut self.layout.inspector_open,
+            PanelSide::Chat => &mut self.layout.chat_open,
         };
         *open ^= true;
     }
@@ -146,7 +154,7 @@ impl AiaApp {
             .file
             .as_deref()
             .and_then(Path::file_name)
-            .map_or("Sin título".into(), |n| n.to_string_lossy().into_owned());
+            .map_or("Untitled".into(), |n| n.to_string_lossy().into_owned());
         let dirty = if self.editor.is_dirty() { "*" } else { "" };
         let title = format!("{name}{dirty} — AIA Studio");
         if title != self.title {
@@ -155,14 +163,14 @@ impl AiaApp {
         }
     }
 
-    /// Pregunta qué hacer si hay cambios sin guardar. Devuelve `true` si se puede continuar.
+    /// Asks what to do with unsaved changes. Returns `true` if it is fine to continue.
     fn confirm_discard(&mut self) -> bool {
         if !self.editor.is_dirty() {
             return true;
         }
         let answer = rfd::MessageDialog::new()
             .set_title("AIA Studio")
-            .set_description("Hay cambios sin guardar. ¿Guardar antes de continuar?")
+            .set_description("There are unsaved changes. Save before continuing?")
             .set_buttons(rfd::MessageButtons::YesNoCancel)
             .show();
         match answer {
@@ -193,7 +201,7 @@ impl AiaApp {
             .and_then(|json| project::from_json(&json).map_err(|e| e.to_string()));
         match result {
             Ok((doc, chats)) => self.load_project(Editor::new(doc), chats, Some(path)),
-            Err(e) => self.notify(format!("No se pudo abrir {}: {e}", path.display())),
+            Err(e) => self.notify(format!("Could not open {}: {e}", path.display())),
         }
     }
 
@@ -205,14 +213,14 @@ impl AiaApp {
         self.design.reset();
     }
 
-    /// Devuelve `true` si se guardó.
+    /// Returns `true` if the project was saved.
     fn save(&mut self, save_as: bool) -> bool {
         let path = match (&self.file, save_as) {
             (Some(path), false) => path.clone(),
             _ => {
                 let Some(mut path) = rfd::FileDialog::new()
                     .add_filter(FILE_FILTER.0, FILE_FILTER.1)
-                    .set_file_name("animacion.aia")
+                    .set_file_name("animation.aia")
                     .save_file()
                 else {
                     return false;
@@ -229,12 +237,12 @@ impl AiaApp {
         match result {
             Ok(()) => {
                 self.editor.mark_saved();
-                self.notify(format!("Guardado en {}", path.display()));
+                self.notify(format!("Saved to {}", path.display()));
                 self.file = Some(path);
                 true
             }
             Err(e) => {
-                self.notify(format!("No se pudo guardar {}: {e}", path.display()));
+                self.notify(format!("Could not save {}: {e}", path.display()));
                 false
             }
         }
@@ -252,15 +260,16 @@ impl AiaApp {
             mode: Option<Mode>,
         }
         let pressed = ctx.input_mut(|i| {
-            // Primero los atajos con más modificadores, para que Ctrl+Z no "robe" Ctrl+Shift+Z.
+            // Shortcuts with more modifiers first, so Ctrl+Z does not "steal" Ctrl+Shift+Z.
             let redo = i.consume_shortcut(&REDO) || i.consume_shortcut(&REDO_ALT);
             let save_as = i.consume_shortcut(&SAVE_AS);
-            let chat = i.consume_shortcut(&TOGGLE_CHAT);
-            let panel = if chat {
-                Some(PanelSide::Right)
+            let panel = if i.consume_shortcut(&TOGGLE_CHAT) {
+                Some(PanelSide::Chat)
+            } else if i.consume_shortcut(&TOGGLE_INSPECTOR) {
+                Some(PanelSide::Inspector)
             } else if i.consume_shortcut(&TOGGLE_MODES) {
                 Some(PanelSide::Top)
-            } else if i.consume_shortcut(&TOGGLE_SIDEBAR) {
+            } else if i.consume_shortcut(&TOGGLE_TOOLS) {
                 Some(PanelSide::Left)
             } else if i.consume_shortcut(&TOGGLE_BOTTOM) {
                 Some(PanelSide::Bottom)
@@ -314,21 +323,22 @@ impl AiaApp {
         }
     }
 
-    /// Primera barra: menús a la izquierda y botones de paneles a la derecha.
+    /// First bar: menus on the left, panel buttons on the right.
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             self.menus(ui);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // De derecha a izquierda: chat, inferior, lateral (igual que VS Code).
+                // Right to left, as in VS Code.
                 let toggles = [
-                    (PanelSide::Right, self.layout.chat_open, "Chat IA", &TOGGLE_CHAT),
-                    (PanelSide::Bottom, self.layout.bottom_open, "Panel inferior", &TOGGLE_BOTTOM),
-                    (PanelSide::Left, self.layout.sidebar_open, "Panel lateral", &TOGGLE_SIDEBAR),
-                    (PanelSide::Top, self.layout.mode_bar_open, "Barra de modos", &TOGGLE_MODES),
+                    (PanelSide::Chat, self.layout.chat_open, "AI chat", &TOGGLE_CHAT),
+                    (PanelSide::Inspector, self.layout.inspector_open, "Style and Layers", &TOGGLE_INSPECTOR),
+                    (PanelSide::Bottom, self.layout.bottom_open, "bottom panel", &TOGGLE_BOTTOM),
+                    (PanelSide::Left, self.layout.tools_open, "Tools", &TOGGLE_TOOLS),
+                    (PanelSide::Top, self.layout.mode_bar_open, "mode bar", &TOGGLE_MODES),
                 ];
                 for (side, open, name, shortcut) in toggles {
-                    let verb = if open { "Ocultar" } else { "Mostrar" };
-                    let tip = format!("{verb} {}  ({})", name.to_lowercase(), ui.ctx().format_shortcut(shortcut));
+                    let verb = if open { "Hide" } else { "Show" };
+                    let tip = format!("{verb} {name}  ({})", ui.ctx().format_shortcut(shortcut));
                     if panel_toggle(ui, side, open).on_hover_text(tip).clicked() {
                         self.toggle(side);
                     }
@@ -338,50 +348,49 @@ impl AiaApp {
     }
 
     fn menus(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button("Archivo", |ui| {
-            if ui.add(menu_item(ui, "Nuevo", &NEW)).clicked() {
+        ui.menu_button("File", |ui| {
+            if ui.add(menu_item(ui, "New", &NEW)).clicked() {
                 self.new_document();
             }
-            if ui.add(menu_item(ui, "Abrir…", &OPEN)).clicked() {
+            if ui.add(menu_item(ui, "Open…", &OPEN)).clicked() {
                 self.open();
             }
             ui.separator();
-            if ui.add(menu_item(ui, "Guardar", &SAVE)).clicked() {
+            if ui.add(menu_item(ui, "Save", &SAVE)).clicked() {
                 self.save(false);
             }
-            if ui.add(menu_item(ui, "Guardar como…", &SAVE_AS)).clicked() {
+            if ui.add(menu_item(ui, "Save As…", &SAVE_AS)).clicked() {
                 self.save(true);
             }
         });
-        ui.menu_button("Editar", |ui| {
-            if ui.add_enabled(self.editor.can_undo(), menu_item(ui, "Deshacer", &UNDO)).clicked() {
+        ui.menu_button("Edit", |ui| {
+            if ui.add_enabled(self.editor.can_undo(), menu_item(ui, "Undo", &UNDO)).clicked() {
                 self.editor.undo();
             }
-            if ui.add_enabled(self.editor.can_redo(), menu_item(ui, "Rehacer", &REDO)).clicked() {
+            if ui.add_enabled(self.editor.can_redo(), menu_item(ui, "Redo", &REDO)).clicked() {
                 self.editor.redo();
             }
         });
-        ui.menu_button("Ver", |ui| {
-            if ui.add(menu_item(ui, "Barra de modos", &TOGGLE_MODES)).clicked() {
-                self.toggle(PanelSide::Top);
-            }
-            if ui.add(menu_item(ui, "Panel lateral", &TOGGLE_SIDEBAR)).clicked() {
-                self.toggle(PanelSide::Left);
-            }
-            if ui.add(menu_item(ui, "Panel inferior", &TOGGLE_BOTTOM)).clicked() {
-                self.toggle(PanelSide::Bottom);
-            }
-            if ui.add(menu_item(ui, "Chat IA", &TOGGLE_CHAT)).clicked() {
-                self.toggle(PanelSide::Right);
+        ui.menu_button("View", |ui| {
+            for (name, side, shortcut) in [
+                ("Mode Bar", PanelSide::Top, &TOGGLE_MODES),
+                ("Tools", PanelSide::Left, &TOGGLE_TOOLS),
+                ("Style and Layers", PanelSide::Inspector, &TOGGLE_INSPECTOR),
+                ("Bottom Panel", PanelSide::Bottom, &TOGGLE_BOTTOM),
+                ("AI Chat", PanelSide::Chat, &TOGGLE_CHAT),
+            ] {
+                if ui.add(menu_item(ui, name, shortcut)).clicked() {
+                    self.toggle(side);
+                }
             }
             ui.separator();
-            if ui.button("Encuadrar escenario").clicked() {
+            if ui.button("Fit Stage").clicked() {
                 self.canvas.reset_view();
             }
         });
     }
 
-    /// Segunda barra: los modos de trabajo, centrados.
+    /// Second bar: the work modes, centered.
     fn mode_bar(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
@@ -401,39 +410,63 @@ impl AiaApp {
         ui.add_space(4.0);
     }
 
-    /// Barra de íconos a la izquierda: herramientas del modo.
-    fn activity_bar(&mut self, ui: &mut egui::Ui) {
-        ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-            ui.add_space(6.0);
-            match self.layout.mode {
-                Mode::Design => self.design.tools_ui(ui, &mut self.editor),
-                Mode::Animation => self.animation.tools_ui(ui),
-            }
-        });
+    /// Third bar: options of the active tool (as in Moho).
+    fn options_bar(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(3.0);
+        match self.layout.mode {
+            Mode::Design => self.design.options_bar(ui, &mut self.editor),
+            Mode::Animation => self.animation.options_bar(ui),
+        }
+        ui.add_space(3.0);
     }
 
-    fn sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(6.0);
-        ui.strong(format!("{} {}", modes::icon(self.layout.mode), self.layout.mode.title()));
+    /// Tools panel on the left.
+    fn tools_panel(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(4.0);
+        ui.vertical_centered(|ui| ui.strong("Tools"));
         ui.separator();
-        egui::ScrollArea::vertical().show(ui, |ui| match self.layout.mode {
-            Mode::Design => self.design.sidebar_ui(ui, &mut self.editor),
-            Mode::Animation => self.animation.sidebar_ui(ui),
+        match self.layout.mode {
+            Mode::Design => self.design.tools_panel(ui, &mut self.editor),
+            Mode::Animation => self.animation.tools_panel(ui),
+        }
+    }
+
+    /// Style (top) and Layers (bottom), as in Moho.
+    fn inspector(&mut self, ui: &mut egui::Ui) {
+        if self.layout.mode == Mode::Animation {
+            self.animation.inspector(ui);
+            return;
+        }
+        egui::Panel::top("style_panel")
+            .resizable(true)
+            .default_size(230.0)
+            .size_range(120.0..=600.0)
+            .show(ui, |ui| {
+                ui.add_space(4.0);
+                ui.vertical_centered(|ui| ui.strong("Style"));
+                ui.separator();
+                egui::ScrollArea::vertical().show(ui, |ui| self.design.style_panel(ui, &mut self.editor));
+            });
+        egui::CentralPanel::no_frame().show(ui, |ui| {
+            ui.add_space(4.0);
+            ui.vertical_centered(|ui| ui.strong("Layers"));
+            ui.separator();
+            self.design.layers_panel(ui, &mut self.editor);
         });
     }
 
-    /// Panel inferior general: la línea de tiempo en Animation, los mensajes en Design.
+    /// General bottom panel: the timeline in Animation, messages in Design.
     fn bottom_panel(&mut self, ui: &mut egui::Ui) {
         if self.layout.mode == Mode::Animation {
-            self.animation.timeline_ui(ui);
+            self.animation.timeline(ui);
             return;
         }
         ui.add_space(4.0);
-        ui.strong("Mensajes");
+        ui.strong("Messages");
         ui.separator();
         egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
             if self.log.is_empty() {
-                ui.weak("Sin mensajes.");
+                ui.weak("No messages.");
             }
             for message in &self.log {
                 ui.label(message);
@@ -455,37 +488,38 @@ impl AiaApp {
                 self.design.canvas_input(ui, &response, &view, &mut self.editor);
                 self.design.cursor(&view, &self.editor, response.hover_pos())
             }
-            // Animation todavía no interpreta el mouse: solo pan y zoom.
+            // Animation does not interpret the mouse yet: only pan and zoom.
             Mode::Animation if view.panning => egui::CursorIcon::Grab,
             Mode::Animation => egui::CursorIcon::Default,
         };
         response.on_hover_cursor(cursor);
 
-        let data = self.design.prepare_overlay(ui, &view);
-        let overlay = match mode {
-            Mode::Design => self.design.overlay(&data, &self.editor),
-            Mode::Animation => Default::default(),
+        let data = (mode == Mode::Design).then(|| self.design.prepare_overlay(ui, &view, &self.editor));
+        let overlay = match &data {
+            Some(data) => self.design.overlay(data, &self.editor),
+            None => Default::default(),
         };
         if let Err(e) = self.canvas.paint(ui, view.rect, self.editor.doc(), &overlay) {
             self.notify(e);
         }
     }
 
+    /// Status bar: how to use the active tool on the left (as in Moho), state on the right.
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(format!("{} {}", modes::icon(self.layout.mode), self.layout.mode.title()));
-            ui.separator();
-            ui.label(format!("Zoom {:.0}%", self.canvas.zoom() * 100.0));
-            if self.layout.mode == Mode::Design {
+            match self.layout.mode {
+                Mode::Design => ui.label(self.design.tool_hint()),
+                Mode::Animation => ui.label(self.layout.mode.description()),
+            };
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(format!("{} {}", modes::agent_icon(self.chat.agent()), self.chat.agent().title()));
                 ui.separator();
-                ui.label(format!("Herramienta: {}", self.design.tool().name()));
-            }
-            ui.separator();
-            ui.label(format!("{} Agente: {}", modes::agent_icon(self.chat.agent()), self.chat.agent().title()));
-            if let Some(message) = self.log.last() {
-                ui.separator();
-                ui.weak(message);
-            }
+                ui.label(format!("Zoom {:.0}%", self.canvas.zoom() * 100.0));
+                if let Some(message) = self.log.last() {
+                    ui.separator();
+                    ui.weak(message);
+                }
+            });
         });
     }
 }
@@ -494,8 +528,8 @@ fn menu_item<'a>(ui: &egui::Ui, text: &'a str, shortcut: &KeyboardShortcut) -> e
     egui::Button::new(text).shortcut_text(ui.ctx().format_shortcut(shortcut))
 }
 
-/// Botón con el dibujo de la ventana y el panel resaltado (como los de VS Code):
-/// el panel se ve relleno cuando está abierto y solo con borde cuando está cerrado.
+/// Button showing the window with the panel highlighted (like VS Code's): the panel is
+/// filled when open and only outlined when closed.
 fn panel_toggle(ui: &mut egui::Ui, side: PanelSide, open: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(26.0, 22.0), egui::Sense::click());
     if ui.is_rect_visible(rect) {
@@ -507,16 +541,25 @@ fn panel_toggle(ui: &mut egui::Ui, side: PanelSide, open: bool) -> egui::Respons
         let frame = egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 13.0));
         let stroke = egui::Stroke::new(1.2, color);
         ui.painter().rect_stroke(frame, 2.0, stroke, egui::StrokeKind::Inside);
-        let panel = match side {
-            PanelSide::Top => egui::Rect::from_min_max(frame.min, egui::pos2(frame.max.x, frame.min.y + 4.0)),
-            PanelSide::Left => egui::Rect::from_min_max(frame.min, egui::pos2(frame.min.x + 5.0, frame.max.y)),
-            PanelSide::Right => egui::Rect::from_min_max(egui::pos2(frame.max.x - 5.0, frame.min.y), frame.max),
-            PanelSide::Bottom => egui::Rect::from_min_max(egui::pos2(frame.min.x, frame.max.y - 5.0), frame.max),
+        let right = |width: f32| egui::Rect::from_min_max(egui::pos2(frame.max.x - width, frame.min.y), frame.max);
+        let panels = match side {
+            PanelSide::Top => vec![egui::Rect::from_min_max(frame.min, egui::pos2(frame.max.x, frame.min.y + 4.0))],
+            PanelSide::Left => vec![egui::Rect::from_min_max(frame.min, egui::pos2(frame.min.x + 5.0, frame.max.y))],
+            PanelSide::Bottom => vec![egui::Rect::from_min_max(egui::pos2(frame.min.x, frame.max.y - 5.0), frame.max)],
+            PanelSide::Chat => vec![right(5.0)],
+            // Two stacked boxes: Style over Layers.
+            PanelSide::Inspector => {
+                let column = right(6.0);
+                let (top, bottom) = column.split_top_bottom_at_fraction(0.5);
+                vec![top.shrink(0.5), bottom.shrink(0.5)]
+            }
         };
-        if open {
-            ui.painter().rect_filled(panel, 1.0, color);
-        } else {
-            ui.painter().rect_stroke(panel, 1.0, stroke, egui::StrokeKind::Inside);
+        for panel in panels {
+            if open {
+                ui.painter().rect_filled(panel, 1.0, color);
+            } else {
+                ui.painter().rect_stroke(panel, 1.0, stroke, egui::StrokeKind::Inside);
+            }
         }
     }
     response
@@ -540,27 +583,31 @@ impl eframe::App for AiaApp {
         };
         self.chat.follow_suggestion(self.layout.mode, suggestion);
 
-        // El orden importa: los paneles laterales se reservan antes que el canvas central.
+        // Order matters: side panels are reserved before the central canvas, and the first
+        // right panel declared is the outermost one.
         egui::Panel::top("menu_bar").show(ui, |ui| self.menu_bar(ui));
         if self.layout.mode_bar_open {
             egui::Panel::top("mode_bar").show(ui, |ui| self.mode_bar(ui));
         }
+        egui::Panel::top("options_bar").show(ui, |ui| self.options_bar(ui));
         egui::Panel::bottom("status_bar").show(ui, |ui| self.status_bar(ui));
-        egui::Panel::left("activity_bar")
-            .resizable(false)
-            .exact_size(48.0)
-            .show(ui, |ui| self.activity_bar(ui));
-        if self.layout.sidebar_open {
-            egui::Panel::left("sidebar")
-                .default_size(250.0)
-                .size_range(180.0..=420.0)
-                .show(ui, |ui| self.sidebar(ui));
+        if self.layout.tools_open {
+            egui::Panel::left("tools")
+                .resizable(false)
+                .exact_size(140.0)
+                .show(ui, |ui| self.tools_panel(ui));
         }
         if self.layout.chat_open {
             egui::Panel::right("chat")
                 .default_size(300.0)
                 .size_range(220.0..=520.0)
                 .show(ui, |ui| self.chat.ui(ui, self.layout.mode, &self.chats));
+        }
+        if self.layout.inspector_open {
+            egui::Panel::right("inspector")
+                .default_size(260.0)
+                .size_range(200.0..=420.0)
+                .show(ui, |ui| self.inspector(ui));
         }
         if self.layout.bottom_open {
             egui::Panel::bottom("bottom_panel")

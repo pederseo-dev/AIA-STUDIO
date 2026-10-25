@@ -1,5 +1,5 @@
-//! El archivo de proyecto `.aia`: el documento más los datos que viajan con él
-//! pero no son parte del dibujo, como las conversaciones con cada agente.
+//! The `.aia` project file: the document plus data that travels with it but is not
+//! part of the drawing, such as the conversations with each agent.
 
 use std::collections::BTreeMap;
 
@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::document::Document;
 use crate::mode::Agent;
 
-/// Versión del formato de archivo `.aia`.
-pub const FORMAT_VERSION: u32 = 3;
+/// Version of the `.aia` file format.
+pub const FORMAT_VERSION: u32 = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -24,8 +24,8 @@ pub struct ChatMessage {
     pub text: String,
 }
 
-/// Historial de chat por agente. No pasa por undo/redo: deshacer un dibujo no
-/// borra lo que se habló.
+/// Chat history per agent. Not part of undo/redo: undoing a drawing does not erase
+/// what was said.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Chats {
     conversations: BTreeMap<Agent, Vec<ChatMessage>>,
@@ -68,7 +68,8 @@ pub fn to_json(document: &Document, chats: &Chats) -> serde_json::Result<String>
 }
 
 pub fn from_json(json: &str) -> serde_json::Result<(Document, Chats)> {
-    let file: ProjectFile = serde_json::from_str(json)?;
+    let mut file: ProjectFile = serde_json::from_str(json)?;
+    file.document.sort_points();
     Ok((file.document, file.chats))
 }
 
@@ -84,7 +85,7 @@ mod tests {
             Agent::Rigging,
             ChatMessage {
                 role: ChatRole::User,
-                text: "agregá un hueso al brazo".into(),
+                text: "add a bone to the arm".into(),
             },
         );
         let json = to_json(&doc, &chats).unwrap();

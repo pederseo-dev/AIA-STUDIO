@@ -1,19 +1,19 @@
-//! Render del documento con vello sobre una textura wgpu.
+//! Renders the document with vello into a wgpu texture.
 //!
-//! No depende de la UI: la app registra la textura resultante donde la necesite.
+//! Independent of the UI: the app registers the resulting texture wherever it needs it.
 
-use aia_core::kurbo::{Affine, BezPath, Circle, Line, Point, Rect, Stroke, Vec2};
-use aia_core::{Color, Document, Shape, ShapeId, VectorPath};
+use aia_core::kurbo::{Affine, BezPath, Cap, Circle, Join, Line, Point, Rect, Stroke, Vec2};
+use aia_core::{Color, Document, EdgeRef, Layer, LayerId, LayerKind, LayerTransform, Mesh, PointId, Shape, ShapeId};
 use vello::peniko::{self, Fill};
 use vello::{AaConfig, AaSupport, RenderParams, Renderer, RendererOptions};
 
 pub use vello::{Scene, wgpu};
 
-/// Vista del canvas: qué parte del documento se ve y con qué zoom.
-/// Trabaja en "puntos" de la UI (antes de aplicar la densidad de píxeles).
+/// Canvas view: which part of the document is visible and at what zoom.
+/// Works in UI "points" (before applying pixel density).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera {
-    /// Posición en pantalla del origen del documento.
+    /// Screen position of the document origin.
     pub offset: Vec2,
     pub zoom: f64,
 }
@@ -39,66 +39,67 @@ impl Camera {
         ((p.to_vec2() - self.offset) / self.zoom).to_point()
     }
 
-    /// Ajusta el zoom manteniendo fijo el punto de pantalla `anchor`.
+    /// Changes the zoom keeping the screen point `anchor` fixed.
     pub fn zoom_at(&mut self, anchor: Point, factor: f64) {
         let before = self.screen_to_doc(anchor);
         self.zoom = (self.zoom * factor).clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
         self.offset = anchor.to_vec2() - before.to_vec2() * self.zoom;
     }
 
-    /// Centra el escenario del documento dentro de un viewport de `size` puntos.
+    /// Centers the document stage inside a viewport of `size` points.
     pub fn fit(&mut self, doc: &Document, size: Vec2) {
         let margin = 0.9;
-        self.zoom = ((size.x / doc.width).min(size.y / doc.height) * margin)
-            .clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
+        self.zoom = ((size.x / doc.width).min(size.y / doc.height) * margin).clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
         self.offset = (size - Vec2::new(doc.width, doc.height) * self.zoom) / 2.0;
     }
 }
 
-/// Cosas que se dibujan encima del documento sin ser parte de él.
+/// Things drawn on top of the document (or temporarily replacing parts of it) without being part of it.
 #[derive(Default)]
 pub struct Overlay<'a> {
-    /// Transformación provisional (por ejemplo, mientras se arrastra) de algunas formas.
-    pub moving: Option<(&'a [ShapeId], Affine)>,
-    /// Trazado provisional de una forma existente (edición de nodos en curso).
-    pub edited: Option<(ShapeId, &'a VectorPath)>,
-    /// Forma que se está creando con una herramienta.
-    pub preview: Option<&'a Shape>,
-    /// Formas seleccionadas: se dibuja su caja envolvente.
-    pub selection: &'a [ShapeId],
-    /// Línea guía fina (por ejemplo, el tramo elástico de la pluma), en coordenadas del documento.
-    pub guide: Option<&'a BezPath>,
-    /// Nodos y manijas visibles para editar.
-    pub nodes: Option<NodeOverlay<'a>>,
-    /// Caja de transformación (escalar/rotar) de la selección, en coordenadas del documento.
+    /// Temporary mesh of a layer (an edit in progress).
+    pub edited_mesh: Option<(LayerId, &'a Mesh)>,
+    /// Temporary transform of a layer.
+    pub edited_transform: Option<(LayerId, LayerTransform)>,
+    /// Points and curves of the layer being edited.
+    pub wireframe: Option<Wireframe<'a>>,
+    /// Transform box (scale/rotate), in document coordinates.
     pub transform_box: Option<Rect>,
-    /// Marco de selección que se está arrastrando, en coordenadas del documento.
+    /// Selection marquee being dragged, in document coordinates.
     pub marquee: Option<Rect>,
+    /// Origin of the active layer (crosshair), in document coordinates.
+    pub origin: Option<Point>,
 }
 
-/// Nodos de un trazado a mostrar. Las manijas se ven solo en los nodos seleccionados.
-pub struct NodeOverlay<'a> {
-    pub path: &'a VectorPath,
-    /// Del espacio local del trazado al documento.
-    pub transform: Affine,
-    pub selected: &'a [usize],
+/// The (normally invisible) geometry of a vector layer, for editing.
+pub struct Wireframe<'a> {
+    pub layer: LayerId,
+    pub selected_points: &'a [PointId],
+    /// Show the curve handles at the selected points.
+    pub handles: bool,
+    /// Selected shapes: hatched fill and highlighted outline.
+    pub selected_shapes: &'a [ShapeId],
+    /// Highlighted edges (Create Shape preview, hovered edge).
+    pub highlight: &'a [EdgeRef],
+    /// Point that a dragged point will weld onto when dropped.
+    pub weld_target: Option<PointId>,
 }
 
-/// Distancia (en puntos de pantalla) de la manija de rotación sobre la caja.
+/// Distance (in screen points) of the rotate handle above the box.
 pub const ROTATE_HANDLE_OFFSET: f64 = 24.0;
 
-/// Manijas de la caja de transformación.
+/// Handles of the transform box.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BoxHandle {
-    /// 0 = arriba-izquierda, 1 = arriba-derecha, 2 = abajo-derecha, 3 = abajo-izquierda.
+    /// 0 = top-left, 1 = top-right, 2 = bottom-right, 3 = bottom-left.
     Corner(u8),
-    /// 0 = arriba, 1 = derecha, 2 = abajo, 3 = izquierda.
+    /// 0 = top, 1 = right, 2 = bottom, 3 = left.
     Edge(u8),
     Rotate,
 }
 
-/// Posición de cada manija para una caja en espacio de pantalla (puntos).
-/// La usan el render y el hit-testing de la app, así coinciden siempre.
+/// Position of each handle for a box in screen space (points).
+/// Used by both the renderer and the app's hit testing, so they always match.
 pub fn box_handles(rect: Rect) -> [(BoxHandle, Point); 9] {
     let c = rect.center();
     [
@@ -116,118 +117,209 @@ pub fn box_handles(rect: Rect) -> [(BoxHandle, Point); 9] {
 
 const WORKSPACE_BG: peniko::Color = peniko::Color::from_rgb8(48, 48, 52);
 const SELECTION: peniko::Color = peniko::Color::from_rgb8(40, 140, 255);
+const WIRE: peniko::Color = peniko::Color::from_rgba8(70, 70, 90, 200);
+const ORIGIN: peniko::Color = peniko::Color::from_rgb8(230, 60, 60);
 
-fn color(c: Color) -> peniko::Color {
-    peniko::Color::from_rgba8(c.r, c.g, c.b, c.a)
+fn color(c: Color, opacity: f64) -> peniko::Color {
+    peniko::Color::from_rgba8(c.r, c.g, c.b, (c.a as f64 * opacity).round().clamp(0.0, 255.0) as u8)
 }
 
-fn draw_shape(scene: &mut Scene, shape: &Shape, path: &VectorPath, transform: Affine) {
-    let transform = transform * shape.transform;
-    let path = path.to_bezpath();
-    if let Some(fill) = shape.style.fill {
-        scene.fill(Fill::NonZero, transform, color(fill), None, &path);
+fn draw_shape(scene: &mut Scene, mesh: &Mesh, shape: &Shape, transform: Affine, opacity: f64) {
+    if let Some(fill) = shape.style.fill
+        && let Some(path) = mesh.fill_path(shape)
+    {
+        // With more than one contour, the inner ones are holes.
+        let rule = if shape.fill.len() > 1 { Fill::EvenOdd } else { Fill::NonZero };
+        scene.fill(rule, transform, color(fill, opacity), None, &path);
     }
     if let Some(stroke) = shape.style.stroke {
-        let style = Stroke::new(stroke.width);
-        scene.stroke(&style, transform, color(stroke.color), None, &path);
-    }
-}
-
-/// Nodos como cuadrados y manijas como círculos, en espacio de pantalla.
-fn draw_nodes(scene: &mut Scene, nodes: &NodeOverlay, view: Affine, scale: f64) {
-    let to_screen = view * nodes.transform;
-    let line = Stroke::new(scale);
-    let half = 3.5 * scale;
-    for (i, node) in nodes.path.nodes.iter().enumerate() {
-        let p = to_screen * node.point;
-        let selected = nodes.selected.contains(&i);
-        if selected {
-            for handle in [node.handle_in, node.handle_out] {
-                if handle == Vec2::ZERO {
-                    continue;
-                }
-                let h = to_screen * (node.point + handle);
-                scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &Line::new(p, h));
-                let dot = Circle::new(h, half);
-                scene.fill(Fill::NonZero, Affine::IDENTITY, peniko::Color::WHITE, None, &dot);
-                scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &dot);
-            }
+        let style = Stroke::new(stroke.width).with_caps(Cap::Round).with_join(Join::Round);
+        for path in mesh.outline_paths(shape) {
+            scene.stroke(&style, transform, color(stroke.color, opacity), None, &path);
         }
-        let square = Rect::from_center_size(p, (half * 2.0, half * 2.0));
-        let fill = if selected { SELECTION } else { peniko::Color::WHITE };
-        scene.fill(Fill::NonZero, Affine::IDENTITY, fill, None, &square);
-        scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &square);
     }
 }
 
-/// Construye la escena completa. `scale` convierte puntos de UI a píxeles físicos.
+/// What the wireframe needs from its layer, resolved while walking the tree.
+struct WireTarget<'a> {
+    mesh: &'a Mesh,
+    /// From layer space to screen pixels (already includes the view).
+    to_screen: Affine,
+}
+
+fn draw_layers<'a>(
+    scene: &mut Scene,
+    layers: &'a [Layer],
+    parent: Affine,
+    opacity: f64,
+    visible: bool,
+    overlay: &Overlay<'a>,
+    wire: &mut Option<WireTarget<'a>>,
+) {
+    for layer in layers {
+        let local = match overlay.edited_transform {
+            Some((id, t)) if id == layer.id => t.affine(layer.origin),
+            _ => layer.affine(),
+        };
+        let transform = parent * local;
+        let opacity = opacity * layer.opacity;
+        let visible = visible && layer.visible;
+        match &layer.kind {
+            LayerKind::Vector { mesh } => {
+                let mesh = match overlay.edited_mesh {
+                    Some((id, edited)) if id == layer.id => edited,
+                    _ => mesh,
+                };
+                if overlay.wireframe.as_ref().is_some_and(|w| w.layer == layer.id) {
+                    *wire = Some(WireTarget { mesh, to_screen: transform });
+                }
+                if visible {
+                    for shape in &mesh.shapes {
+                        draw_shape(scene, mesh, shape, transform, opacity);
+                    }
+                }
+            }
+            LayerKind::Group { children } => draw_layers(scene, children, transform, opacity, visible, overlay, wire),
+        }
+    }
+}
+
+/// Builds the whole scene. `scale` converts UI points to physical pixels.
 pub fn build_scene(scene: &mut Scene, doc: &Document, camera: &Camera, overlay: &Overlay, scale: f64) {
     scene.reset();
     let view = Affine::scale(scale) * camera.doc_to_screen();
 
     let stage = Rect::new(0.0, 0.0, doc.width, doc.height);
-    scene.fill(Fill::NonZero, view, color(doc.background), None, &stage);
+    scene.fill(Fill::NonZero, view, color(doc.background, 1.0), None, &stage);
 
-    // Las formas fuera del escenario también se ven: es útil para animar entradas.
-    for layer in doc.layers.iter().filter(|l| l.visible) {
-        for shape in &layer.shapes {
-            let extra = match overlay.moving {
-                Some((ids, transform)) if ids.contains(&shape.id) => transform,
-                _ => Affine::IDENTITY,
-            };
-            let path = match overlay.edited {
-                Some((id, path)) if id == shape.id => path,
-                _ => &shape.path,
-            };
-            draw_shape(scene, shape, path, view * extra);
-        }
+    // Shapes outside the stage are visible too: useful for animating entrances.
+    let mut wire = None;
+    draw_layers(scene, &doc.layers, view, 1.0, true, overlay, &mut wire);
+
+    if let (Some(w), Some(target)) = (&overlay.wireframe, wire) {
+        draw_wireframe(scene, w, &target, scale);
     }
 
-    if let Some(preview) = overlay.preview {
-        draw_shape(scene, preview, &preview.path, view);
-    }
-
-    if let Some(guide) = overlay.guide {
-        scene.stroke(&Stroke::new(scale), Affine::IDENTITY, SELECTION, None, &(view * guide.clone()));
-    }
-
-    // La selección se dibuja en espacio de pantalla para que el grosor no dependa del zoom.
-    let selection_stroke = Stroke::new(scale).with_dashes(0.0, [4.0 * scale, 3.0 * scale]);
-    for id in overlay.selection {
-        let Some(shape) = doc.shape(*id) else { continue };
-        let mut bounds = shape.bounds();
-        if let Some((ids, transform)) = overlay.moving
-            && ids.contains(id)
-        {
-            bounds = transform.transform_rect_bbox(bounds);
-        }
-        let screen = view.transform_rect_bbox(bounds).inflate(2.0 * scale, 2.0 * scale);
-        scene.stroke(&selection_stroke, Affine::IDENTITY, SELECTION, None, &screen);
-    }
-
-    if let Some(nodes) = &overlay.nodes {
-        draw_nodes(scene, nodes, view, scale);
-    }
-
+    let dashed = Stroke::new(scale).with_dashes(0.0, [4.0 * scale, 3.0 * scale]);
     if let Some(rect) = overlay.transform_box {
         draw_transform_box(scene, camera.doc_to_screen().transform_rect_bbox(rect), scale);
     }
-
     if let Some(rect) = overlay.marquee {
         let screen = view.transform_rect_bbox(rect);
         scene.fill(Fill::NonZero, Affine::IDENTITY, SELECTION.with_alpha(0.12), None, &screen);
-        scene.stroke(&selection_stroke, Affine::IDENTITY, SELECTION, None, &screen);
+        scene.stroke(&dashed, Affine::IDENTITY, SELECTION, None, &screen);
+    }
+    if let Some(origin) = overlay.origin {
+        let p = view * origin;
+        let r = 8.0 * scale;
+        let line = Stroke::new(1.5 * scale);
+        scene.stroke(&line, Affine::IDENTITY, ORIGIN, None, &Line::new(p - Vec2::new(r, 0.0), p + Vec2::new(r, 0.0)));
+        scene.stroke(&line, Affine::IDENTITY, ORIGIN, None, &Line::new(p - Vec2::new(0.0, r), p + Vec2::new(0.0, r)));
+        scene.stroke(&line, Affine::IDENTITY, ORIGIN, None, &Circle::new(p, r * 0.5));
     }
 }
 
-/// `rect` en puntos de pantalla; `scale` lo lleva a píxeles.
+/// Curves, points and handles of the layer being edited, with constant on-screen width.
+fn draw_wireframe(scene: &mut Scene, wire: &Wireframe, target: &WireTarget, scale: f64) {
+    let mesh = target.mesh;
+    let to_screen = target.to_screen;
+    let thin = Stroke::new(scale);
+
+    for curve in &mesh.curves {
+        scene.stroke(&thin, Affine::IDENTITY, WIRE, None, &(to_screen * mesh.curve_path(curve)));
+    }
+
+    let thick = Stroke::new(3.0 * scale).with_caps(Cap::Round);
+    for edge in wire.highlight {
+        if let Some(seg) = mesh.edge_segment(*edge) {
+            let mut path = BezPath::from_path_segments(std::iter::once(seg));
+            path.apply_affine(to_screen);
+            scene.stroke(&thick, Affine::IDENTITY, SELECTION, None, &path);
+        }
+    }
+
+    for shape in wire.selected_shapes.iter().filter_map(|id| mesh.shape(*id)) {
+        draw_shape_selection(scene, mesh, shape, to_screen, scale);
+    }
+
+    let half = 3.0 * scale;
+    if wire.handles {
+        for curve in &mesh.curves {
+            for (i, node) in curve.nodes.iter().enumerate() {
+                if !wire.selected_points.contains(&node.point) {
+                    continue;
+                }
+                let Some(pos) = mesh.pos(node.point) else { continue };
+                let (h_in, h_out) = mesh.handles(curve, i);
+                let p = to_screen * pos;
+                for h in [h_in, h_out] {
+                    if h == Vec2::ZERO {
+                        continue;
+                    }
+                    let hp = to_screen * (pos + h);
+                    scene.stroke(&thin, Affine::IDENTITY, SELECTION, None, &Line::new(p, hp));
+                    let dot = Circle::new(hp, half);
+                    scene.fill(Fill::NonZero, Affine::IDENTITY, peniko::Color::WHITE, None, &dot);
+                    scene.stroke(&thin, Affine::IDENTITY, SELECTION, None, &dot);
+                }
+            }
+        }
+    }
+
+    if let Some(pos) = wire.weld_target.and_then(|id| mesh.pos(id)) {
+        let ring = Circle::new(to_screen * pos, 3.0 * half);
+        scene.stroke(&Stroke::new(2.0 * scale), Affine::IDENTITY, SELECTION, None, &ring);
+    }
+
+    for point in mesh.points() {
+        let p = to_screen * point.pos;
+        let square = Rect::from_center_size(p, (half * 2.0, half * 2.0));
+        let selected = wire.selected_points.contains(&point.id);
+        let fill = if selected { SELECTION } else { peniko::Color::WHITE };
+        scene.fill(Fill::NonZero, Affine::IDENTITY, fill, None, &square);
+        scene.stroke(&thin, Affine::IDENTITY, if selected { SELECTION } else { WIRE }, None, &square);
+    }
+}
+
+/// Selected shape, as in Moho: a hatch over its fill and its outline highlighted.
+/// A shape without fill and stroke shows its area and a dashed outline, so it can be found.
+fn draw_shape_selection(scene: &mut Scene, mesh: &Mesh, shape: &Shape, to_screen: Affine, scale: f64) {
+    let invisible = shape.style.fill.is_none() && shape.style.stroke.is_none();
+    if (shape.style.fill.is_some() || invisible)
+        && let Some(path) = mesh.fill_path(shape)
+    {
+        let path = to_screen * path;
+        let rule = if shape.fill.len() > 1 { Fill::EvenOdd } else { Fill::NonZero };
+        let bounds = aia_core::kurbo::Shape::bounding_box(&path);
+        scene.push_clip_layer(rule, Affine::IDENTITY, &path);
+        scene.fill(Fill::NonZero, Affine::IDENTITY, SELECTION.with_alpha(0.15), None, &bounds);
+        let hatch = Stroke::new(scale);
+        let step = 6.0 * scale;
+        let mut x = bounds.x0 - bounds.height();
+        while x < bounds.x1 {
+            let line = Line::new((x, bounds.y1), (x + bounds.height(), bounds.y0));
+            scene.stroke(&hatch, Affine::IDENTITY, SELECTION.with_alpha(0.6), None, &line);
+            x += step;
+        }
+        scene.pop_layer();
+    }
+    let outline = if shape.style.stroke.is_some() {
+        Stroke::new(2.0 * scale).with_caps(Cap::Round).with_join(Join::Round)
+    } else {
+        Stroke::new(scale).with_dashes(0.0, [4.0 * scale, 3.0 * scale])
+    };
+    for path in mesh.outline_paths(shape) {
+        scene.stroke(&outline, Affine::IDENTITY, SELECTION, None, &(to_screen * path));
+    }
+}
+
+/// `rect` in screen points; `scale` turns it into pixels.
 fn draw_transform_box(scene: &mut Scene, rect: Rect, scale: f64) {
     let to_px = Affine::scale(scale);
     let line = Stroke::new(scale);
     scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &(to_px.transform_rect_bbox(rect)));
-    let handles = box_handles(rect);
     let top = to_px * Point::new(rect.center().x, rect.y0);
-    for (handle, p) in handles {
+    for (handle, p) in box_handles(rect) {
         let p = to_px * p;
         let half = 4.0 * scale;
         if handle == BoxHandle::Rotate {
@@ -243,7 +335,7 @@ fn draw_transform_box(scene: &mut Scene, rect: Rect, scale: f64) {
     }
 }
 
-/// Renderer de vello más la textura de destino, que se recrea al cambiar de tamaño.
+/// The vello renderer plus the target texture, recreated when the size changes.
 pub struct CanvasRenderer {
     renderer: Renderer,
     target: Option<Target>,
@@ -264,14 +356,11 @@ impl CanvasRenderer {
                 ..Default::default()
             },
         )?;
-        Ok(Self {
-            renderer,
-            target: None,
-        })
+        Ok(Self { renderer, target: None })
     }
 
-    /// Renderiza la escena. Devuelve la vista de la textura y `true` si la
-    /// textura es nueva (hay que volver a registrarla en la UI).
+    /// Renders the scene. Returns the texture view and `true` if the texture is new
+    /// (it must be registered again in the UI).
     pub fn render(
         &mut self,
         device: &wgpu::Device,
@@ -286,7 +375,7 @@ impl CanvasRenderer {
         if recreated {
             self.target = Some(Target::new(device, width, height));
         }
-        let target = self.target.as_ref().expect("creado arriba");
+        let target = self.target.as_ref().expect("created above");
         self.renderer.render_to_texture(
             device,
             queue,
@@ -315,18 +404,14 @@ impl Target {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            // vello escribe valores sRGB en una textura Rgba8Unorm, que es justo
-            // lo que espera el shader de egui.
+            // vello writes sRGB values into an Rgba8Unorm texture, which is exactly
+            // what egui's shader expects.
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Self {
-            view,
-            width,
-            height,
-        }
+        Self { view, width, height }
     }
 }
 

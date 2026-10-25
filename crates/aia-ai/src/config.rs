@@ -1,12 +1,12 @@
 use aia_core::Agent;
 use serde::{Deserialize, Serialize};
 
-/// Configuración global de IA del usuario. Se editará desde el panel de
-/// configuración de IA (pendiente de diseño).
+/// The user's global AI settings. Will be edited from the AI settings panel
+/// (design pending).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AiSettings {
     pub providers: Vec<ProviderConfig>,
-    /// Una entrada por agente; cada agente tiene su propio modelo y skills.
+    /// One entry per agent; each agent has its own model and skills.
     pub agents: Vec<AgentAiConfig>,
 }
 
@@ -33,30 +33,30 @@ impl AiSettings {
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
     Anthropic,
-    /// Cualquier API compatible con el formato de OpenAI (incluye servidores locales).
+    /// Any API compatible with the OpenAI format (includes local servers).
     OpenAiCompatible,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderConfig {
-    /// Identificador elegido por el usuario, por ejemplo "claude" o "local".
+    /// Identifier chosen by the user, for example "claude" or "local".
     pub id: String,
     pub kind: ProviderKind,
-    /// `None` usa la URL por defecto del proveedor.
+    /// `None` uses the provider's default URL.
     pub base_url: Option<String>,
-    /// Nombre de la variable de entorno con la API key. La key nunca se guarda
-    /// en el archivo de configuración.
+    /// Name of the environment variable holding the API key. The key is never stored
+    /// in the settings file.
     pub api_key_env: Option<String>,
 }
 
-/// Un modelo concreto de un proveedor configurado.
+/// A specific model from a configured provider.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelRef {
     pub provider_id: String,
     pub model: String,
 }
 
-/// Una skill (instrucciones y conocimiento especializado) activable por agente.
+/// A skill (instructions and specialized knowledge) that can be enabled per agent.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillRef {
     pub id: String,
@@ -66,10 +66,10 @@ pub struct SkillRef {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentAiConfig {
     pub agent: Agent,
-    /// `None` = el agente está desactivado.
+    /// `None` = the agent is disabled.
     pub model: Option<ModelRef>,
     pub skills: Vec<SkillRef>,
-    /// Instrucciones extra del usuario para este agente.
+    /// Extra user instructions for this agent.
     pub system_prompt: Option<String>,
 }
 

@@ -1,5 +1,5 @@
-//! Canvas compartido por todos los modos: render con vello, pan y zoom.
-//! La interpretación del mouse (herramientas) la hace cada modo.
+//! Canvas shared by all modes: vello rendering, pan and zoom.
+//! Each mode interprets the mouse (tools) itself.
 
 use aia_core::Document;
 use aia_core::kurbo::{Point, Vec2};
@@ -7,21 +7,21 @@ use aia_render::{Camera, CanvasRenderer, Overlay, Scene, build_scene, wgpu};
 use eframe::egui::{self, Sense};
 use eframe::egui_wgpu::RenderState;
 
-/// Lo que un modo necesita saber del canvas en este frame.
+/// What a mode needs to know about the canvas this frame.
 pub struct CanvasView {
     pub rect: egui::Rect,
     pub camera: Camera,
-    /// El usuario está moviendo la vista: las herramientas no deben actuar.
+    /// The user is moving the view: tools must not act.
     pub panning: bool,
 }
 
 impl CanvasView {
-    /// Posición de pantalla → puntos relativos al canvas (el espacio de `Camera`).
+    /// Screen position → points relative to the canvas (the `Camera` space).
     pub fn to_local(&self, pos: egui::Pos2) -> Point {
         Point::new((pos.x - self.rect.min.x) as f64, (pos.y - self.rect.min.y) as f64)
     }
 
-    /// Posición de pantalla → coordenadas del documento.
+    /// Screen position → document coordinates.
     pub fn to_doc(&self, pos: egui::Pos2) -> Point {
         self.camera.screen_to_doc(self.to_local(pos))
     }
@@ -30,8 +30,8 @@ impl CanvasView {
 pub struct Canvas {
     gpu: Result<CanvasGpu, String>,
     camera: Camera,
-    /// Mientras el usuario no mueva ni haga zoom, el escenario se mantiene
-    /// encuadrado aunque cambie el tamaño del canvas (por ejemplo, al maximizar).
+    /// Until the user pans or zooms, the stage stays framed even if the canvas
+    /// size changes (for example, when maximizing).
     auto_fit: bool,
     last_size: egui::Vec2,
 }
@@ -39,10 +39,10 @@ pub struct Canvas {
 impl Canvas {
     pub fn new(render_state: Option<RenderState>) -> Self {
         let gpu = render_state
-            .ok_or_else(|| "No hay GPU disponible (wgpu)".to_string())
+            .ok_or_else(|| "No GPU available (wgpu)".to_string())
             .and_then(CanvasGpu::new);
         if let Err(e) = &gpu {
-            log::error!("No se pudo iniciar el canvas: {e}");
+            log::error!("Could not start the canvas: {e}");
         }
         Self {
             gpu,
@@ -61,7 +61,7 @@ impl Canvas {
         self.last_size = egui::Vec2::ZERO;
     }
 
-    /// Reserva el área del canvas y aplica pan/zoom. Devuelve `None` si no hay espacio.
+    /// Allocates the canvas area and applies pan/zoom. Returns `None` if there is no room.
     pub fn begin(&mut self, ui: &mut egui::Ui, doc: &Document) -> Option<(CanvasView, egui::Response)> {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         if rect.width() < 1.0 || rect.height() < 1.0 {
@@ -105,7 +105,7 @@ impl Canvas {
                 ui.painter().text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    format!("Canvas no disponible: {e}"),
+                    format!("Canvas not available: {e}"),
                     egui::FontId::proportional(14.0),
                     ui.visuals().warn_fg_color,
                 );
@@ -123,7 +123,7 @@ impl Canvas {
     }
 }
 
-/// Recursos de GPU del canvas: el renderer de vello y la textura registrada en egui.
+/// GPU resources of the canvas: the vello renderer and the texture registered in egui.
 struct CanvasGpu {
     render_state: RenderState,
     renderer: CanvasRenderer,
@@ -142,7 +142,7 @@ impl CanvasGpu {
         })
     }
 
-    /// Renderiza `self.scene` y devuelve la textura lista para pintar con egui.
+    /// Renders `self.scene` and returns the texture ready to paint with egui.
     fn render(&mut self, width: u32, height: u32) -> Result<egui::TextureId, String> {
         let RenderState {
             device,
@@ -153,7 +153,7 @@ impl CanvasGpu {
         let (view, recreated) = self
             .renderer
             .render(device, queue, &self.scene, width, height)
-            .map_err(|e| format!("Error de render: {e}"))?;
+            .map_err(|e| format!("Render error: {e}"))?;
 
         let mut egui_renderer = egui_renderer.write();
         let id = match self.texture_id {

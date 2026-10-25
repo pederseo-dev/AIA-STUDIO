@@ -1,22 +1,28 @@
 use eframe::egui;
 
-/// Modo Animation: poses, keyframes y curvas. Nunca modifica la base.
-/// Todavía sin herramientas.
+/// Animation mode: poses, keyframes and curves. Never modifies the base.
+/// No tools yet.
 #[derive(Default)]
 pub struct AnimationMode;
 
 impl AnimationMode {
-    pub fn tools_ui(&mut self, _ui: &mut egui::Ui) {}
-
-    pub fn sidebar_ui(&mut self, ui: &mut egui::Ui) {
-        super::coming_soon(ui, "Propiedades del keyframe y curvas de easing.");
+    pub fn tools_panel(&mut self, ui: &mut egui::Ui) {
+        ui.weak("No tools yet");
     }
 
-    /// Línea de tiempo: ocupa el panel inferior en este modo.
-    pub fn timeline_ui(&mut self, ui: &mut egui::Ui) {
+    pub fn options_bar(&mut self, ui: &mut egui::Ui) {
+        ui.weak("Animation tools: coming soon");
+    }
+
+    pub fn inspector(&mut self, ui: &mut egui::Ui) {
+        super::coming_soon(ui, "Keyframe properties and easing curves.");
+    }
+
+    /// Timeline: fills the bottom panel in this mode.
+    pub fn timeline(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
-        ui.strong("Línea de tiempo");
+        ui.strong("Timeline");
         ui.separator();
-        super::coming_soon(ui, "Keyframes por capa y forma, reproducción y scrubbing.");
+        super::coming_soon(ui, "Keyframes per layer and shape, playback and scrubbing.");
     }
 }

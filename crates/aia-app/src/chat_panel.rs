@@ -1,8 +1,8 @@
-//! Panel de chat (derecha): un solo panel con un selector de agentes especializados.
+//! Chat panel (right): a single panel with a selector of specialized agents.
 //!
-//! Cada agente tiene su propia conversación. El selector sigue automáticamente al
-//! modo y a la herramienta activa; elegir un agente a mano lo mantiene hasta que
-//! cambie la sugerencia (otro modo u otra herramienta).
+//! Each agent has its own conversation. The selector follows the mode and the active
+//! tool automatically; picking an agent by hand keeps it until the suggestion changes
+//! (another mode or another tool).
 
 use aia_core::{Agent, ChatRole, Chats, Mode};
 use eframe::egui;
@@ -12,7 +12,7 @@ use crate::modes;
 
 pub struct ChatPanel {
     agent: Agent,
-    /// Última sugerencia aplicada; si cambia, el selector salta a la nueva.
+    /// Last applied suggestion; when it changes, the selector jumps to the new one.
     last_suggestion: Option<Agent>,
     draft: String,
 }
@@ -32,7 +32,7 @@ impl ChatPanel {
         self.agent
     }
 
-    /// Selección automática: se llama cada frame con la sugerencia del modo activo.
+    /// Automatic selection: called every frame with the active mode's suggestion.
     pub fn follow_suggestion(&mut self, mode: Mode, suggestion: Agent) {
         if self.last_suggestion != Some(suggestion) || !self.agent.available_in(mode) {
             self.agent = suggestion;
@@ -42,7 +42,7 @@ impl ChatPanel {
 
     pub fn ui(&mut self, ui: &mut egui::Ui, mode: Mode, chats: &Chats) {
         ui.add_space(6.0);
-        ui.strong(format!("{} Chat IA", icons::CHAT_CIRCLE_DOTS));
+        ui.strong(format!("{} AI Chat", icons::CHAT_CIRCLE_DOTS));
         ui.add_space(4.0);
         self.agent_selector(ui, mode);
         ui.weak(self.agent.description());
@@ -56,11 +56,11 @@ impl ChatPanel {
             .show(ui, |ui| {
                 let messages = chats.messages(self.agent);
                 if messages.is_empty() {
-                    ui.weak(format!("Todavía no hay conversación con el agente {}.", self.agent.title()));
+                    ui.weak(format!("No conversation with the {} agent yet.", self.agent.title()));
                 }
                 for message in messages {
                     let who = match message.role {
-                        ChatRole::User => "Vos",
+                        ChatRole::User => "You",
                         ChatRole::Assistant => self.agent.title(),
                     };
                     ui.label(egui::RichText::new(who).strong());
@@ -70,15 +70,15 @@ impl ChatPanel {
             });
 
         ui.separator();
-        // Sin proveedor configurado todavía: la entrada queda visible pero deshabilitada.
+        // No provider configured yet: the input is visible but disabled.
         ui.add_enabled(
             false,
             egui::TextEdit::multiline(&mut self.draft)
                 .desired_rows(2)
                 .desired_width(f32::INFINITY)
-                .hint_text(format!("Pedile algo a {}…", self.agent.title())),
+                .hint_text(format!("Ask {} something…", self.agent.title())),
         )
-        .on_disabled_hover_text("Configurá un modelo para este agente (configuración de IA: próximamente)");
+        .on_disabled_hover_text("Configure a model for this agent (AI settings: coming soon)");
     }
 
     fn agent_selector(&mut self, ui: &mut egui::Ui, mode: Mode) {
@@ -90,7 +90,7 @@ impl ChatPanel {
                     .add_enabled(available, egui::Button::selectable(self.agent == agent, text))
                     .on_hover_text(agent.description())
                     .on_disabled_hover_text(format!(
-                        "Disponible en el modo {}: cambiá de modo para usarlo",
+                        "Available in {} mode: switch modes to use it",
                         agent.mode().title()
                     ));
                 if response.clicked() {

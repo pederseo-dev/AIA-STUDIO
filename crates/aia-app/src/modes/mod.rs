@@ -1,5 +1,5 @@
-//! Los modos de trabajo. Cada uno aporta sus herramientas (barra de íconos),
-//! su panel lateral y su forma de interpretar el mouse sobre el canvas.
+//! Work modes. Each one provides its tools, its panels and its own way of
+//! interpreting the mouse on the canvas.
 
 pub mod animation;
 pub mod design;
@@ -23,16 +23,44 @@ pub fn agent_icon(agent: Agent) -> &'static str {
     }
 }
 
-/// Botón cuadrado de la barra de herramientas, con nombre y atajo en el tooltip.
-pub fn tool_button(ui: &mut egui::Ui, selected: bool, icon: &str, name: &str, shortcut: &str) -> egui::Response {
-    let button = egui::Button::selectable(selected, egui::RichText::new(icon).size(20.0))
-        .min_size(egui::vec2(34.0, 34.0));
-    ui.add(button).on_hover_text(format!("{name}  ({shortcut})"))
+/// A tool icon: a Phosphor glyph or one drawn with strokes.
+#[derive(Clone, Copy)]
+pub enum Icon {
+    Glyph(&'static str),
+    Drawn(fn(&egui::Painter, egui::Rect, egui::Color32)),
 }
 
-/// Texto de "próximamente" para modos o secciones sin implementar.
+impl Icon {
+    /// Shows the icon at `size` points, in the current text color.
+    pub fn show(self, ui: &mut egui::Ui, size: f32) -> egui::Response {
+        match self {
+            Icon::Glyph(glyph) => ui.label(egui::RichText::new(glyph).size(size)),
+            Icon::Drawn(paint) => {
+                let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+                paint(ui.painter(), rect, ui.visuals().text_color());
+                response
+            }
+        }
+    }
+}
+
+/// Square button of the tools panel (the caller adds the tooltip).
+pub fn tool_button(ui: &mut egui::Ui, selected: bool, icon: Icon) -> egui::Response {
+    let size = egui::vec2(28.0, 28.0);
+    match icon {
+        Icon::Glyph(glyph) => ui.add(egui::Button::selectable(selected, egui::RichText::new(glyph).size(17.0)).min_size(size)),
+        Icon::Drawn(paint) => {
+            let response = ui.add(egui::Button::selectable(selected, "").min_size(size));
+            let color = ui.style().interact_selectable(&response, selected).fg_stroke.color;
+            paint(ui.painter(), egui::Rect::from_center_size(response.rect.center(), egui::vec2(16.0, 16.0)), color);
+            response
+        }
+    }
+}
+
+/// "Coming soon" text for modes or sections not implemented yet.
 pub fn coming_soon(ui: &mut egui::Ui, text: &str) {
     ui.add_space(8.0);
     ui.weak(text);
-    ui.weak("Próximamente");
+    ui.weak("Coming soon");
 }

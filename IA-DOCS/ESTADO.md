@@ -1,11 +1,17 @@
 # Estado del proyecto
 
-_Última actualización: 2026-10-18_
+_Última actualización: 2026-10-25_
+
+> **Rumbo actual (2026-10-25):** AIA Studio es **nuestra propia versión de Moho** (modelo de datos y
+> herramientas lo más parecidos posible) con la diferencia de un **chat de IA con agentes especializados
+> por área**. Diseño en [MODELO-V2.md](MODELO-V2.md) (aprobado). **Etapa 1 hecha** (v2.0) y layout de Moho en inglés (v2.1). Lo de v1–v1.4
+> queda como historial: ese núcleo y esas herramientas se reemplazaron.
 
 ## Visión
 
 AIA Studio (Artificial Intelligence Animation Studio): aplicación de escritorio para
-animación 2D **vectorial** profesional. Se arranca con herramientas básicas y se escala.
+animación 2D **vectorial** profesional al estilo de **Moho** (referencia: [REFERENCIA-MOHO.md](REFERENCIA-MOHO.md)),
+intermedia entre principiante y profesional. Se arranca con herramientas básicas y se escala.
 Dos **modos** de trabajo (como Rive y Spine):
 
 - **Design**: construir el personaje: dibujo vectorial y, más adelante, huesos y pesos. Modifica la base.
@@ -21,23 +27,32 @@ conversación, herramientas, modelo y skills:
 
 No es objetivo (por ahora): animación tradicional cuadro a cuadro ni dibujo a mano alzada.
 
-## Interfaz (estilo VS Code)
+## Trabajo en curso (leer primero)
+
+- **Sin commit:** v2.0 (Etapa 1, modelo estilo Moho) y v2.1 (layout de Moho + interfaz en inglés)
+  están en el árbol de trabajo pero todavía no se commitearon. Último commit: v1.4.
+- **Falta prueba manual de v2.1 y v2.2:** compila, 36 tests y clippy limpios, pero no se probó con
+  el mouse (ver ARQUITECTURA §8: preguntar antes de simular entrada).
+- Próximo paso acordado: que el usuario pruebe v2.1 y v2.2, commitear (usuario autor, Claude co-autor) y
+  debatir la Etapa 2.
+
+## Interfaz (layout de Moho, textos en inglés)
 
 ```
-┌ Archivo Editar Ver                                   [◧] [⬓] [◨]   ┐  menús + paneles (Ctrl+B/J/Alt+B)
-├                    [Design]   [Animation]                          ┤  modos (Ctrl+1/2)
-├──┬──────────────┬──────────────────────────────┬─────────────────────┤
-│🛠│ panel lateral │           canvas             │  chat IA con        │
-│  │ (config del  │   (compartido entre modos)    │  selector de agente │
-│  │  modo)       │                              │                     │
-│  │              ├──────────────────────────────┤                     │
-│  │              │ panel inferior: mensajes o    │                     │
-│  │              │ línea de tiempo (Animation)   │                     │
-├──┴──────────────┴──────────────────────────────┴─────────────────────┤
-│ barra de estado: modo · zoom · herramienta · agente · mensajes      │
-└──────────────────────────────────────────────────────────────────────┘
+File Edit View                                [modos][Tools][abajo][Style/Layers][Chat]
+                     [Design]   [Animation]                  ← modos (Ctrl+1/2, Ctrl+M)
+Position X:[..] Y:[..] [Reset] Scale ...  ← barra de opciones de la herramienta activa
+┌─Tools──────┐┌──────────────────────┐┌─Style────┐┌─AI Chat─┐
+│Draw  ▣✥✎⌒  ││        canvas        ││Fill ■    ││ agentes │
+│      ◇✂    ││
+│────────────││
+│Fill  ↖⊞    ││                      │├─Layers───┤│         │
+│────────────││
+│Layer ⤢⊕    │├──────────────────────┤│ árbol    ││         │
+└────────────┘│ Messages / Timeline  │└──────────┘└─────────┘
+ayuda de la herramienta (como Moho)                     zoom · agente
 ```
-- Barra de íconos izquierda: herramientas del modo; tooltip con nombre + atajo.
+- Tools `Ctrl+B`, Style/Layers `Ctrl+Shift+B`, panel inferior `Ctrl+J`, chat `Ctrl+Alt+B`.
 - Se recuerda entre sesiones: modo, paneles abiertos, tamaño de ventana y de paneles.
 
 ## Hecho ✅
@@ -88,9 +103,65 @@ No es objetivo (por ahora): animación tradicional cuadro a cuadro ni dibujo a m
 - Configuración de IA por agente (`AgentAiConfig`).
 - Tests: 29.
 
+**v2.0 — Etapa 1: base estilo Moho** (arranque limpio)
+- Núcleo nuevo: árbol de capas (vectorial y grupo) con transformación, origen y opacidad; mallas de
+  puntos compartidos, curvas (manijas automáticas con curvatura, como Moho, o manuales) y formas que
+  referencian aristas (relleno con agujeros y contorno parcial). Formato `.aia` v4 (sin migración).
+- Operaciones de estructura con reconstrucción de las formas: insertar punto en curva, borrar puntos
+  (la curva sigue de vecino a vecino), borrar arista (se pierde el relleno), soldar (cierra curvas),
+  crear forma desde puntos.
+- Herramientas con los atajos de Moho: Seleccionar puntos (G), Transformar puntos (T, caja para
+  escalar/rotar, manijas Bézier opcionales), Agregar punto (A, con soldadura automática), Dibujar forma
+  (E, rectángulo/óvalo), Borrar arista (D), Seleccionar forma (Q, orden de apilado), Crear forma (U),
+  Transformar capa (M, alrededor del origen), Origen (O, sin mover la capa).
+- Relleno y trazo automáticos; Pico/Suave y curvatura numérica para los puntos seleccionados.
+- Panel de estilo en vivo (formas nuevas o formas seleccionadas, solo cambia la propiedad tocada) y
+  renombrar formas. Panel de capas en árbol: crear capa/grupo, borrar, subir/bajar, agrupar, sacar del
+  grupo, mover a un grupo, ocultar, bloquear, renombrar.
+- Paleta inteligente: en un grupo solo quedan las herramientas de capa.
+- Cambios continuos (campos numéricos, colores, nombres) se deshacen en un solo paso (`execute_merged`).
+- Tests: 35 (`cargo test --workspace`). Probado en la app con mouse y teclado simulados.
+- **Quedó afuera respecto de v1.4** (se rehará sobre el modelo nuevo): copiar/pegar/duplicar formas.
+
+**v2.1 — Layout de Moho e interfaz en inglés**
+- Interfaz, mensajes y comentarios del código en inglés (los nombres de herramientas son los de Moho);
+  la documentación sigue en español.
+- Panel **Tools** a la izquierda con secciones (Draw, Fill, Layer) y botones en grilla.
+- **Barra de opciones** arriba del canvas: opciones de la herramienta activa (posición/escala/ángulo con
+  Reset para la capa, posición de los puntos, curvatura Peak/Smooth, Auto Fill/Stroke, etc.).
+- **Style** y **Layers** en una columna a la derecha (Ctrl+Shift+B); el chat de IA en el extremo derecho.
+- Barra de estado con la ayuda de la herramienta activa, como Moho.
+- Compila, 35 tests y clippy sin avisos. **Falta probarlo a mano** (no se simuló mouse para no interferir
+  con el usuario).
+
+**v2.2 — Correcciones pedidas por el usuario**
+- Herramienta **Curvature (C)** adelantada de la Etapa 2: arrastre horizontal sobre los puntos
+  seleccionados (o el más cercano) cambia la curvatura en vivo; las manijas manuales vuelven a automáticas.
+- "Show Bezier Handles" encendido por defecto (también se ven con Curvature).
+- Líneas separadoras entre las secciones Draw, Fill y Layer del panel Tools.
+- **Style** edita las formas seleccionadas con cualquier herramienta (antes solo con Select Shape);
+  el encabezado muestra el nombre de la forma y **Deselect** vuelve a los valores por defecto. El cambio
+  también queda como valor por defecto (como Moho). Las formas recién dibujadas quedan seleccionadas.
+- Selección de formas como Moho: trama semitransparente sobre el relleno y contorno resaltado (antes
+  un rectángulo punteado). Una forma sin relleno ni trazo se puede seguir seleccionando (bug corregido)
+  y se ve con su área tramada y el contorno punteado.
+- Íconos propios dibujados con trazos para Select Points, Transform Points, Add Point, Curvature,
+  Draw Shape y Delete Edge, con las ideas de los de Moho (no se copian: tienen copyright).
+  Las demás herramientas siguen con Phosphor.
+- Según el manual de Moho: Transform Points mueve el punto tocado o la forma entera si se agarra desde
+  adentro del relleno; **Auto Weld** (casilla) en Transform Points y Add Point: soltar una punta de curva
+  sobre otro punto los suelda (se resalta el destino; `Enter` al arrastrar suelda cualquier punto) y la
+  curva que se cierra recibe Auto Fill/Stroke. Flip H/V de puntos. Curvature arrastra las manijas Bézier
+  (ángulo y largo) y suma **Reset**. Las opciones de herramienta son casillas con nombre, como Moho.
+- Pendiente de verificar en Moho (el manual no lo dice): clic suelto con Add Point (¿punto aislado?) y
+  Delete Edge sobre un punto (¿borra el punto? ¿la curva se une o se corta?).
+- Tests: 36.
+
 ## Problemas conocidos / resueltos
 
 - **Vulkan + Intel UHD crashea** → DX12 por defecto en Windows. Ver `DECISIONES.md`.
+- **Entrada simulada durante una prueba** cayó sobre el escritorio del usuario (con Moho abierto).
+  Ahora se pregunta antes de manejar la app con mouse/teclado simulados (ver ARQUITECTURA §8).
 - **Maximizar al crear la ventana** dejaba la superficie de render más grande que el área visible
   (se cortaba la barra de estado) → ahora se maximiza en el primer frame y solo en la primera ejecución.
 
@@ -104,10 +175,11 @@ No es objetivo (por ahora): animación tradicional cuadro a cuadro ni dibujo a m
 
 ## Próximos pasos (debatir antes de implementar)
 
-1. Fase B del dibujo en Design (ver DECISIONES): paleta de colores, estilo de trazo, gradientes,
-   opacidad, grosor variable por nodo, booleanas, grilla e imanes, texto.
-2. Fase C (puente a los huesos): grupos, punto de pivote, importar SVG/imágenes, deformadores.
-3. Panel de configuración de IA (proveedores, modelos, skills por agente) y agente Draw con los
-   `Command` como herramientas, resumen de escena y captura del canvas.
-4. Herramienta Hueso en Design + agente Rigging.
-5. Modo Animation (keyframes, línea de tiempo) + agente Animation.
+Reemplazan el plan anterior (Fases B/C sobre el modelo v1). Detalle en [MODELO-V2.md](MODELO-V2.md):
+
+1. ~~Etapa 1 — Base estilo Moho~~ (hecha, v2.0). Pendiente de esa etapa: copiar/pegar.
+2. **Etapa 2 — Dibujo completo:** soldadura, grosor por punto, Hide Edge, Paint Bucket, grupos.
+3. **Etapa 3 — Huesos** + agente Rigging.
+4. **Etapa 4 — Animación** (pistas, línea de tiempo, interpolaciones) + agente Animation.
+5. **Etapa 5 — IA:** configuración de proveedores y agente Draw (se puede adelantar).
+6. Después: switch layers, actions, Smart Bones, morphs, onion skin, imágenes, exportar.
