@@ -6,7 +6,11 @@ use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
 use serde::{Deserialize, Serialize};
 
 use crate::canvas::Canvas;
+use crate::ai_settings::AiSettingsWindow;
 use crate::chat_panel::ChatPanel;
+
+/// Storage key of the AI settings (API keys are not there: they live in the credential store).
+const AI_SETTINGS_KEY: &str = "ai_settings";
 use crate::modes::{self, animation::AnimationMode, design::DesignMode};
 
 const UNDO: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
@@ -83,9 +87,9 @@ pub struct AiaApp {
     /// Conversations with each agent; saved inside the `.aia` project.
     chats: Chats,
     file: Option<PathBuf>,
-    /// Model and skills of each agent; no UI yet.
-    #[allow(dead_code)]
+    /// Providers and the model of each agent (saved with the app, keys apart).
     ai_settings: AiSettings,
+    ai_window: AiSettingsWindow,
     /// Messages for the user (errors and warnings). The last one shows in the status bar.
     log: Vec<String>,
     title: String,
@@ -103,6 +107,7 @@ impl AiaApp {
         cc.egui_ctx.set_fonts(fonts);
 
         let stored: Option<Layout> = cc.storage.and_then(|s| eframe::get_value(s, eframe::APP_KEY));
+        let ai_settings = cc.storage.and_then(|s| eframe::get_value(s, AI_SETTINGS_KEY)).unwrap_or_default();
         // Maximize on the first run; afterwards eframe remembers the window size.
         let maximize_pending = stored.is_none();
         let layout = stored.unwrap_or_default();
@@ -116,7 +121,8 @@ impl AiaApp {
             chat: ChatPanel::default(),
             chats: Chats::default(),
             file: None,
-            ai_settings: AiSettings::default(),
+            ai_settings,
+            ai_window: AiSettingsWindow::default(),
             log: Vec::new(),
             title: String::new(),
             allow_close: false,
@@ -384,6 +390,10 @@ impl AiaApp {
                 }
             }
             ui.separator();
+            if ui.button(format!("{} AI Settings…", egui_phosphor::regular::GEAR)).clicked() {
+                self.ai_window.open = true;
+            }
+            ui.separator();
             if ui.button("Fit Stage").clicked() {
                 self.canvas.reset_view();
             }
@@ -489,10 +499,18 @@ impl AiaApp {
                 self.design.cursor(&view, &self.editor, response.hover_pos())
             }
             // Animation does not interpret the mouse yet: only pan and zoom.
-            Mode::Animation if view.panning => egui::CursorIcon::Grab,
-            Mode::Animation => egui::CursorIcon::Default,
+            Mode::Animation if view.panning => modes::CanvasCursor { icon: egui::CursorIcon::Grab, badge: None },
+            Mode::Animation => modes::CanvasCursor { icon: egui::CursorIcon::Default, badge: None },
         };
-        response.on_hover_cursor(cursor);
+        // While dragging, the mouse may leave the canvas: the badge follows it anyway.
+        let pointer = response.hover_pos().or_else(|| response.dragged().then(|| response.interact_pointer_pos()).flatten());
+        if let (Some(pointer), Some(badge)) = (pointer, cursor.badge) {
+            modes::paint_cursor_badge(ui.ctx(), pointer, badge);
+        }
+        if response.dragged() {
+            ui.ctx().set_cursor_icon(cursor.icon);
+        }
+        response.on_hover_cursor(cursor.icon);
 
         let data = (mode == Mode::Design).then(|| self.design.prepare_overlay(ui, &view, &self.editor));
         let overlay = match &data {
@@ -582,6 +600,7 @@ impl eframe::App for AiaApp {
             Mode::Animation => aia_core::Agent::default_for(Mode::Animation),
         };
         self.chat.follow_suggestion(self.layout.mode, suggestion);
+        self.chat.poll(&mut self.chats);
 
         // Order matters: side panels are reserved before the central canvas, and the first
         // right panel declared is the outermost one.
@@ -601,7 +620,11 @@ impl eframe::App for AiaApp {
             egui::Panel::right("chat")
                 .default_size(300.0)
                 .size_range(220.0..=520.0)
-                .show(ui, |ui| self.chat.ui(ui, self.layout.mode, &self.chats));
+                .show(ui, |ui| {
+                    if self.chat.ui(ui, self.layout.mode, &mut self.chats, &self.ai_settings) {
+                        self.ai_window.open = true;
+                    }
+                });
         }
         if self.layout.inspector_open {
             egui::Panel::right("inspector")
@@ -617,10 +640,12 @@ impl eframe::App for AiaApp {
         }
         egui::CentralPanel::no_frame().show(ui, |ui| self.canvas_area(ui));
 
+        self.ai_window.show(&ctx, &mut self.ai_settings);
         self.update_title(&ctx);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, &self.layout);
+        eframe::set_value(storage, AI_SETTINGS_KEY, &self.ai_settings);
     }
 }

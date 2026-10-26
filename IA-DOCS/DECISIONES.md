@@ -133,6 +133,33 @@ El usuario pidió los íconos de Moho para ubicarse. No se copian (son de Lost M
 copyright): se dibujan versiones propias con trazos en `modes/design/icons.rs` (nítidas a cualquier escala,
 toman el color del tema). Empezó por las 6 herramientas principales de Draw.
 
+## 2026-10-26 — IA adelantada en paralelo, con arquitectura propia
+Mientras se prueban las herramientas de dibujo se habilita el chat de IA (Etapa 5 adelantada). Esta parte
+no sigue a Moho: es arquitectura propia basada en prueba e investigación.
+- **Modelos del usuario:** cada usuario usa su propio proveedor y su API key. Proveedores iniciales:
+  **Anthropic** (API nativa) y **compatible con OpenAI** (OpenAI, Gemini, OpenRouter, Groq, DeepSeek,
+  Ollama, LM Studio).
+- **API keys en el almacén seguro del sistema** (crate `keyring` 3: Administrador de credenciales de Windows,
+  Llavero de macOS, Secret Service de Linux), con variable de entorno como alternativa. Nunca en texto plano.
+- **Adaptadores HTTP propios** (con `ureq`, en un hilo) detrás de una interfaz común, en vez de `genai`/`rig`:
+  la API de Claude cambió mucho en 2026 (versión `2026-10-21`, bloques de *thinking* que hay que devolver
+  sin modificar, `temperature` prohibido, sin `tool_choice` forzado, `refusal`) y una librería genérica que
+  se atrase rompería el ciclo de herramientas. No hay SDK oficial de Anthropic para Rust.
+- **Modelos intermedios por defecto** (Claude Sonnet 5.5) para un consumo moderado; se sube solo si no alcanza.
+  Esfuerzo `low` para el chat.
+- La IA **aplica los cambios directamente** (un `Ctrl+Z` por acción) y el canvas se bloquea mientras responde.
+- Librerías previstas: `usvg` (SVG de la IA → trazados), `schemars` (esquemas de herramientas), `image`;
+  después `vtracer` (imagen → vectores) y `rmcp` (servidor MCP, más adelante).
+- **Imagen → capas:** enfoque híbrido (vtracer + la IA agrupa y nombra por partes), empezando por una capa
+  de imagen de referencia. **Prompt → capas:** plan de partes, una capa por parte, revisión con captura.
+
+## 2026-10-26 — Modelos gratuitos y abiertos como prioridad de prueba
+El usuario no puede pagar la API por ahora: se prueba con capas gratis (NVIDIA Build, OpenRouter `:free`,
+Gemini, Groq) o modelos locales (Ollama, LM Studio), todos por el adaptador compatible con OpenAI.
+Consecuencias: la lista de modelos se pide al proveedor (cambia seguido), hay reintentos ante límites y la
+Fase B tiene que funcionar con modelos modestos (validar bien lo que mandan y devolver los errores). Con la
+GPU integrada del usuario los modelos locales serán lentos: se recomienda NVIDIA u OpenRouter.
+
 ## 2026-10-17 — Flujo de git
 Se trabaja directo en `main` hasta tener una base estable. El usuario dirige y es autor de
 los commits; Claude figura como `Co-Authored-By`.

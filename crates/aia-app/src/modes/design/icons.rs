@@ -117,3 +117,55 @@ pub fn delete_edge(painter: &Painter, rect: Rect, color: Color32) {
     painter.line_segment([g.p(6.0, 1.5), g.p(10.0, 5.5)], stroke);
     painter.line_segment([g.p(10.0, 1.5), g.p(6.0, 5.5)], stroke);
 }
+
+// ---- Cursor badges (small symbols drawn next to the mouse, as in Moho) --------------------------
+
+/// Circular arrow: rotate.
+pub fn rotate(painter: &Painter, rect: Rect, color: Color32) {
+    let g = Grid::new(rect);
+    let stroke = g.stroke(color);
+    let center = g.p(8.0, 8.0);
+    let radius = 5.5 * g.unit;
+    // Three quarters of a circle, from the top going clockwise.
+    let points: Vec<Pos2> = (0..=24)
+        .map(|i| {
+            let angle = -std::f32::consts::FRAC_PI_2 + i as f32 / 24.0 * 1.5 * std::f32::consts::PI;
+            center + vec2(angle.cos(), angle.sin()) * radius
+        })
+        .collect();
+    let tip = points[0];
+    painter.add(Shape::line(points, stroke));
+    painter.line_segment([tip, tip + vec2(3.0, -2.5) * g.unit], stroke);
+    painter.line_segment([tip, tip + vec2(3.0, 2.5) * g.unit], stroke);
+}
+
+/// Diagonal double arrow: scale.
+pub fn scale(painter: &Painter, rect: Rect, color: Color32) {
+    let g = Grid::new(rect);
+    let stroke = g.stroke(color);
+    let (a, b) = (g.p(3.0, 13.0), g.p(13.0, 3.0));
+    painter.line_segment([a, b], stroke);
+    for (tip, dir) in [(a, vec2(1.0, -1.0)), (b, vec2(-1.0, 1.0))] {
+        painter.line_segment([tip, tip + vec2(dir.x, 0.0) * 4.0 * g.unit], stroke);
+        painter.line_segment([tip, tip + vec2(0.0, dir.y) * 4.0 * g.unit], stroke);
+    }
+}
+
+/// Crosshair with a circle: the rotation pivot.
+pub fn pivot(painter: &Painter, rect: Rect, color: Color32) {
+    let g = Grid::new(rect);
+    let stroke = g.stroke(color);
+    painter.circle_stroke(g.p(8.0, 8.0), 3.5 * g.unit, stroke);
+    painter.line_segment([g.p(1.0, 8.0), g.p(15.0, 8.0)], stroke);
+    painter.line_segment([g.p(8.0, 1.0), g.p(8.0, 15.0)], stroke);
+}
+
+/// Two points meeting in a ring: weld.
+pub fn weld(painter: &Painter, rect: Rect, color: Color32) {
+    let g = Grid::new(rect);
+    let stroke = g.stroke(color);
+    painter.circle_stroke(g.p(8.0, 8.0), 4.0 * g.unit, stroke);
+    painter.circle_filled(g.p(8.0, 8.0), 1.8 * g.unit, color);
+    painter.line_segment([g.p(0.5, 8.0), g.p(4.0, 8.0)], stroke);
+    painter.line_segment([g.p(12.0, 8.0), g.p(15.5, 8.0)], stroke);
+}

@@ -1,6 +1,7 @@
 // In release no console opens next to the window (in debug it does, to see the logs).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ai_settings;
 mod app;
 mod canvas;
 mod chat_panel;

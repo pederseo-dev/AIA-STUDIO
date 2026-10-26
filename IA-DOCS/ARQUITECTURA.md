@@ -26,7 +26,7 @@ sigan compartiendo la misma versión de wgpu (`cargo tree -i wgpu`).
 crates/
   aia-core/    Documento estilo Moho, comandos, undo/redo, Mode, Agent, archivo de proyecto. Sin UI ni GPU.
   aia-render/  Documento + cámara + overlay → escena vello → textura wgpu.
-  aia-ai/      Configuración de IA por agente (solo tipos por ahora).
+  aia-ai/      IA: configuración, API keys, proveedores (Anthropic, compatible con OpenAI), chat en un hilo.
   aia-app/     Ejecutable `aia-studio`.
 ```
 
@@ -43,13 +43,28 @@ src/
   project.rs    archivo .aia v4: { format_version, document, chats }
 ```
 
+### aia-ai por dentro
+```
+src/
+  config.rs     AiSettings: proveedores (id, tipo, URL, variable de la key) y modelo de cada agente
+  keys.rs       API keys en el almacén seguro del sistema (keyring) o en una variable de entorno
+  provider.rs   interfaz común: Request, Reply, Usage, Stop; stream() elige el adaptador
+  anthropic.rs  Messages API por HTTP (ureq) con SSE; guarda los bloques de thinking para devolverlos
+  openai.rs     Chat Completions compatibles con OpenAI, con SSE
+  chat.rs       ChatJob: el pedido corre en un hilo y la UI lee los eventos cada frame
+  prompts.rs    instrucciones fijas por agente (no cambian entre pedidos, así se cachean)
+```
+Reglas de la API de Claude (2026): versión `2026-10-21`; los bloques de *thinking* se devuelven sin modificar
+(por eso `ChatMessage::raw`); no enviar `temperature`/`top_p`; no forzar `tool_choice`; manejar `refusal`.
+
 ### aia-app por dentro
 ```
 src/
   main.rs         opciones de ventana y backend gráfico (DX12 en Windows)
   app.rs          nav de modos, layout de paneles, menús, atajos, archivos, persistencia
   canvas.rs       canvas compartido: render vello→egui, pan/zoom, auto-encuadre (sin herramientas)
-  chat_panel.rs   panel de chat: selector de agentes (automático + manual) y conversación del agente
+  chat_panel.rs   panel de chat: selector de agentes, conversación, envío y respuesta en streaming
+  ai_settings.rs  ventana AI Settings: proveedores, API keys y modelo de cada agente
   modes/
     mod.rs        íconos de modo y de agente, `Icon` (glifo Phosphor o dibujado), botón de herramienta
     design/       (DesignMode)

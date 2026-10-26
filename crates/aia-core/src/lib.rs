@@ -17,7 +17,7 @@ pub use document::{Document, Layer, LayerId, LayerKind, LayerTransform};
 pub use editor::Editor;
 pub use mesh::{Curve, CurveId, CurveNode, DEFAULT_CURVATURE, EdgeRef, Handle, HandleMode, Loop, Mesh, MeshPoint, PointId, Shape, ShapeId};
 pub use mode::{Agent, Mode};
-pub use project::{ChatMessage, ChatRole, Chats};
+pub use project::{ChatMessage, ChatRole, Chats, RawContent};
 pub use style::{Color, StrokeStyle, Style};
 
 /// Re-exported so the other crates use the same kurbo version.

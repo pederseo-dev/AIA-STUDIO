@@ -62,6 +62,31 @@ pub fn tool_button(ui: &mut egui::Ui, selected: bool, icon: Icon) -> egui::Respo
     response
 }
 
+/// Cursor over the canvas: a system cursor plus an optional badge next to it, as in Moho.
+pub struct CanvasCursor {
+    pub icon: egui::CursorIcon,
+    pub badge: Option<Icon>,
+}
+
+/// Size of the cursor badge, in points.
+const BADGE: f32 = 14.0;
+
+/// Draws the badge below and to the right of the mouse, over everything, on a light square
+/// so it reads on dark and light drawings.
+pub fn paint_cursor_badge(ctx: &egui::Context, pointer: egui::Pos2, icon: Icon) {
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("cursor_badge")));
+    let rect = egui::Rect::from_min_size(pointer + egui::vec2(12.0, 14.0), egui::vec2(BADGE, BADGE));
+    painter.rect_filled(rect.expand(2.0), 3.0, egui::Color32::from_white_alpha(225));
+    painter.rect_stroke(rect.expand(2.0), 3.0, egui::Stroke::new(1.0, egui::Color32::from_gray(120)), egui::StrokeKind::Inside);
+    let ink = egui::Color32::from_gray(25);
+    match icon {
+        Icon::Drawn(paint) => paint(&painter, rect, ink),
+        Icon::Glyph(glyph) => {
+            painter.text(rect.center(), egui::Align2::CENTER_CENTER, glyph, egui::FontId::proportional(BADGE - 1.0), ink);
+        }
+    }
+}
+
 /// "Coming soon" text for modes or sections not implemented yet.
 pub fn coming_soon(ui: &mut egui::Ui, text: &str) {
     ui.add_space(8.0);

@@ -6,8 +6,9 @@ use aia_render::{BoxHandle, box_handles, rotate_band};
 use eframe::egui;
 
 use super::tools::{self, Drag, Gesture, Tool};
-use super::{BoxIds, DesignMode, Space};
+use super::{BoxIds, DesignMode, Space, icons};
 use crate::canvas::CanvasView;
+use crate::modes::{CanvasCursor, Icon};
 
 /// Hit radius of the transform box handles, in screen points.
 const BOX_HANDLE_RADIUS: f64 = 7.0;
@@ -22,31 +23,77 @@ struct Modifiers {
 }
 
 impl DesignMode {
-    pub fn cursor(&self, view: &CanvasView, editor: &Editor, hover: Option<egui::Pos2>) -> egui::CursorIcon {
+    /// Mouse cursor over the canvas. Only the transform tools add a badge with the symbol of
+    /// what a click or drag will do (as in Moho); the rest keep the plain system cursor.
+    pub fn cursor(&self, view: &CanvasView, editor: &Editor, hover: Option<egui::Pos2>) -> CanvasCursor {
+        let mut cursor = self.cursor_with_badge(view, editor, hover);
+        if !matches!(self.tool, Tool::TransformPoints | Tool::TransformLayer) {
+            cursor.badge = None;
+        }
+        cursor
+    }
+
+    fn cursor_with_badge(&self, view: &CanvasView, editor: &Editor, hover: Option<egui::Pos2>) -> CanvasCursor {
+        use egui::CursorIcon as C;
+        let with = |icon, badge| CanvasCursor { icon, badge: Some(badge) };
         if view.panning {
-            return egui::CursorIcon::Grab;
+            return CanvasCursor { icon: C::Grab, badge: None };
         }
-        if let Some(pos) = hover
-            && self.hit_pivot(view, editor, pos)
-        {
-            return egui::CursorIcon::Crosshair;
+        // While dragging, the gesture decides.
+        match &self.gesture {
+            Gesture::Points { drag: Drag::Handle(BoxHandle::Rotate), .. } | Gesture::Layer { drag: Drag::Handle(BoxHandle::Rotate), .. } => {
+                return with(C::Default, Icon::Drawn(icons::rotate));
+            }
+            Gesture::Points { drag: Drag::Handle(_), .. } | Gesture::Layer { drag: Drag::Handle(_), .. } => {
+                return with(C::Default, Icon::Drawn(icons::scale));
+            }
+            Gesture::Pivot { .. } => return with(C::Default, Icon::Drawn(icons::pivot)),
+            Gesture::AddPoint { .. } | Gesture::Points { .. } if self.welds_on_release(view, editor) => {
+                return with(C::Default, Icon::Drawn(icons::weld));
+            }
+            _ => {}
         }
-        if let Some(pos) = hover
-            && let Some(handle) = self.hit_box_handle(view, editor, pos)
-        {
-            return match handle {
-                BoxHandle::Corner(0 | 2) => egui::CursorIcon::ResizeNwSe,
-                BoxHandle::Corner(_) => egui::CursorIcon::ResizeNeSw,
-                BoxHandle::Edge(0 | 2) => egui::CursorIcon::ResizeVertical,
-                BoxHandle::Edge(_) => egui::CursorIcon::ResizeHorizontal,
-                BoxHandle::Rotate => egui::CursorIcon::Grab,
-            };
+        if let Some(pos) = hover {
+            if self.hit_pivot(view, editor, pos) {
+                return with(C::Default, Icon::Drawn(icons::pivot));
+            }
+            if let Some(handle) = self.hit_box_handle(view, editor, pos) {
+                let icon = match handle {
+                    BoxHandle::Corner(0 | 2) => C::ResizeNwSe,
+                    BoxHandle::Corner(_) => C::ResizeNeSw,
+                    BoxHandle::Edge(0 | 2) => C::ResizeVertical,
+                    BoxHandle::Edge(_) => C::ResizeHorizontal,
+                    BoxHandle::Rotate => return with(C::Default, Icon::Drawn(icons::rotate)),
+                };
+                return with(icon, Icon::Drawn(icons::scale));
+            }
         }
-        match self.tool {
-            Tool::AddPoint | Tool::DrawShape | Tool::SetOrigin => egui::CursorIcon::Crosshair,
-            Tool::TransformPoints | Tool::TransformLayer => egui::CursorIcon::Move,
-            Tool::Curvature => egui::CursorIcon::ResizeHorizontal,
-            _ => egui::CursorIcon::Default,
+        // Precise tools keep the crosshair; the rest, the arrow.
+        let icon = match self.tool {
+            Tool::AddPoint | Tool::DrawShape | Tool::SetOrigin => C::Crosshair,
+            _ => C::Default,
+        };
+        with(icon, self.tool.icon())
+    }
+
+    /// `true` if releasing the mouse now would weld the dragged point onto another one.
+    fn welds_on_release(&self, view: &CanvasView, editor: &Editor) -> bool {
+        let Some(space) = self.space(editor, view) else { return false };
+        match &self.gesture {
+            Gesture::AddPoint { mesh, point, anchor, .. } => {
+                self.weld_target(mesh, *point, anchor.map(|(id, _)| id), space.tolerance).is_some()
+            }
+            Gesture::Points {
+                drag: Drag::Move,
+                bounds,
+                start,
+                current,
+            } if self.points.len() == 1 => {
+                let transform = tools::box_transform(Drag::Move, *bounds, bounds.center(), *start, *current, false, false);
+                self.transformed_mesh(editor, transform)
+                    .is_some_and(|mesh| self.weld_target(&mesh, self.points[0], None, space.tolerance).is_some())
+            }
+            _ => false,
         }
     }
 

@@ -88,3 +88,11 @@ Para debatir las opciones faltantes del modo Draw.
   - Asistente de IA: https://www.loongbones.app/doc/editor/ui-ai (genera animaciones desde lenguaje natural).
 - **DragonBones Pro 5.6** (antecesor): ficha en https://www.majorgeeks.com/files/details/dragonbones_pro.html
   (mallas, FFD, skinning, IK, editor de curvas, papel cebolla). Fuente de terceros.
+
+## IA (2026-10-26)
+- Skill `claude-api` (referencia de la API de Claude, caché 2026-10-06): modelos actuales y precios,
+  ejemplos HTTP (`curl/examples.md`): versión `2026-10-21`, streaming SSE, herramientas, caché del prompt,
+  *thinking* adaptativo, `fallbacks`, `refusal`.
+- Crates investigados: genai 0.5 (docs.rs), rig 0.43 (docs.rs), usvg 0.48 (README), vtracer (GitHub
+  visioncortex/vtracer), keyring (docs.rs; se usa la 3 porque la 4 cambió a almacenes modulares), rmcp 3.1
+  (SDK oficial de MCP para Rust), ureq 3.5.

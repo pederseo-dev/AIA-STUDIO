@@ -18,15 +18,38 @@ pub enum ChatRole {
     Assistant,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: ChatRole,
     pub text: String,
+    /// The provider's original content (for example Claude's thinking blocks, which must be
+    /// sent back unchanged), with the provider and model that produced it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<RawContent>,
+}
+
+impl ChatMessage {
+    pub fn user(text: impl Into<String>) -> Self {
+        Self {
+            role: ChatRole::User,
+            text: text.into(),
+            raw: None,
+        }
+    }
+}
+
+/// Provider-specific content of a message, only replayed to the same kind of provider.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RawContent {
+    /// Provider kind, for example "anthropic".
+    pub provider: String,
+    pub model: String,
+    pub content: serde_json::Value,
 }
 
 /// Chat history per agent. Not part of undo/redo: undoing a drawing does not erase
 /// what was said.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Chats {
     conversations: BTreeMap<Agent, Vec<ChatMessage>>,
 }
@@ -83,10 +106,7 @@ mod tests {
         let mut chats = Chats::default();
         chats.push(
             Agent::Rigging,
-            ChatMessage {
-                role: ChatRole::User,
-                text: "add a bone to the arm".into(),
-            },
+            ChatMessage::user("add a bone to the arm"),
         );
         let json = to_json(&doc, &chats).unwrap();
         let (doc2, chats2) = from_json(&json).unwrap();

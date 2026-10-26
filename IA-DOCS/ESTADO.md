@@ -29,8 +29,8 @@ No es objetivo (por ahora): animación tradicional cuadro a cuadro ni dibujo a m
 
 ## Trabajo en curso (leer primero)
 
-- Último commit: v2.2 (`51e6a65`). **Sin commit:** v2.3.
-- **Falta prueba manual de v2.1–v2.3:** compila, 37 tests y clippy limpios, pero no se probó con
+- Último commit: v2.4 (IA Fase A, modelos gratuitos y cursores con insignia).
+- **Falta prueba manual de v2.1–v2.4:** compila, 37 tests y clippy limpios, pero no se probó con
   el mouse (ver ARQUITECTURA §8: preguntar antes de simular entrada).
 - Próximo paso acordado: que el usuario pruebe v2.1 y v2.2, commitear (usuario autor, Claude co-autor) y
   debatir la Etapa 2.
@@ -174,6 +174,38 @@ ayuda de la herramienta (como Moho)                     zoom · agente
   La barra muestra solo el ícono de la herramienta, como Moho.
 - Tests: 38.
 
+**v2.4 — IA, Fase A: conexión y chat de texto**
+- `aia-ai`: interfaz común de proveedores (`provider.rs`), adaptador **Anthropic** (Messages API con
+  streaming SSE, *thinking* devuelto sin modificar, caché automática del prompt, `fallbacks: "default"`,
+  `refusal`) y adaptador **compatible con OpenAI** (Chat Completions con streaming); API keys en el almacén
+  seguro del sistema (`keys.rs`); pedidos en un hilo (`chat.rs`); instrucciones fijas por agente (`prompts.rs`).
+- Ventana **AI Settings** (View → AI Settings… o el engranaje del chat): proveedores con su URL y su key,
+  modelo de cada agente (Claude Sonnet 5.5 por defecto). Se guarda con la app; las keys aparte.
+- Chat funcional: la respuesta aparece a medida que llega, tokens usados, borrar conversación, errores
+  visibles. Los mensajes guardan el contenido original del proveedor (`RawContent`) en el `.aia`.
+- **Modelos gratuitos y abiertos:** proveedores preconfigurados (Anthropic, NVIDIA Build, OpenRouter, Gemini,
+  Groq, OpenAI, Ollama y LM Studio locales) con su URL y su variable de key, nota de capa gratis y aviso de
+  privacidad; botón **Fetch models** (`GET /models`, verificado con las listas reales de OpenRouter y
+  NVIDIA) con filtro al elegir; reintentos automáticos ante límites (429/503/529, respetando `retry-after`)
+  avisando en el chat.
+- Los agentes todavía **no modifican la escena** (Fase B, que debe funcionar con los dos adaptadores). Tests: 39.
+- **Falta probarlo con una API key real** (el usuario va a usar una capa gratis: NVIDIA u OpenRouter).
+- **Pendientes detectados con NVIDIA (2026-10-26, en pausa hasta tener una buena key):**
+  - `/models` lista modelos que la cuenta no puede usar (404 "Function not found for account") y otros
+    retirados (410): hace falta un botón "Test" por modelo.
+  - Algunos modelos no responden (GLM 5.3, Gemma 4, DeepSeek v4.1 flash): falta un tiempo límite de espera.
+  - Errores en formato `{"detail": ...}` (RFC 7807): leer `detail` además de `error.message`.
+  - Los modelos que razonan (Nemotron 3.5 Lightning, MiniMax M3.1 Flash, GPT-OSS 20B) mandan primero
+    `reasoning_content`: mostrarlo como "Thinking…" en vez de quedar en silencio.
+
+**v2.4 (dibujo) — Cursores con insignia, como Moho**
+- Solo en Transform Points y Transform Layer (al usuario le molestaba en las demás; Curvature y el resto
+  usan el cursor normal). Sobre el canvas, el cursor del sistema lleva al lado (abajo a la derecha) el símbolo de lo que va a hacer
+  un clic o arrastre: el ícono de la herramienta, rotar (en la franja de rotación), escalar (manijas, con el
+  cursor de redimensionar), pivote, y soldar cuando soltar el punto lo soldaría. Íconos propios dibujados
+  (`icons.rs`); la insignia sigue al mouse también durante el arrastre. Sin cursores de imagen (egui no los
+  soporta) para que la flecha no tenga retraso.
+
 ## Problemas conocidos / resueltos
 
 - **Vulkan + Intel UHD crashea** → DX12 por defecto en Windows. Ver `DECISIONES.md`.
@@ -198,5 +230,7 @@ Reemplazan el plan anterior (Fases B/C sobre el modelo v1). Detalle en [MODELO-V
 2. **Etapa 2 — Dibujo completo:** soldadura, grosor por punto, Hide Edge, Paint Bucket, grupos.
 3. **Etapa 3 — Huesos** + agente Rigging.
 4. **Etapa 4 — Animación** (pistas, línea de tiempo, interpolaciones) + agente Animation.
-5. **Etapa 5 — IA:** configuración de proveedores y agente Draw (se puede adelantar).
+5. **Etapa 5 — IA (adelantada, en curso):** ~~Fase A: conexión y chat~~ (v2.4) → Fase B: el agente Draw
+   dibuja (vista de escena SVG, herramientas → `Batch`, bloqueo del canvas) → Fase C: revisión con captura →
+   prompt a personaje por capas → capa de imagen e imagen a capas → servidor MCP.
 6. Después: switch layers, actions, Smart Bones, morphs, onion skin, imágenes, exportar.
