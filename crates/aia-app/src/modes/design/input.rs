@@ -2,7 +2,7 @@
 
 use aia_core::kurbo::{Point, Rect};
 use aia_core::{Command, CurveNode, Editor, Handle, HandleMode, MeshPoint, PointId};
-use aia_render::{BoxHandle, box_handles};
+use aia_render::{BoxHandle, box_handles, rotate_band};
 use eframe::egui;
 
 use super::tools::{self, Drag, Gesture, Tool};
@@ -25,6 +25,11 @@ impl DesignMode {
     pub fn cursor(&self, view: &CanvasView, editor: &Editor, hover: Option<egui::Pos2>) -> egui::CursorIcon {
         if view.panning {
             return egui::CursorIcon::Grab;
+        }
+        if let Some(pos) = hover
+            && self.hit_pivot(view, editor, pos)
+        {
+            return egui::CursorIcon::Crosshair;
         }
         if let Some(pos) = hover
             && let Some(handle) = self.hit_box_handle(view, editor, pos)
@@ -152,6 +157,7 @@ impl DesignMode {
             Gesture::Marquee { current: c, .. }
             | Gesture::Points { current: c, .. }
             | Gesture::Curvature { current: c, .. }
+            | Gesture::Pivot { current: c }
             | Gesture::DrawShape { current: c, .. }
             | Gesture::Layer { current: c, .. } => *c = current,
             Gesture::BezierHandle { curve, node, handle, mesh } => {
@@ -203,7 +209,8 @@ impl DesignMode {
                 start,
                 current,
             } => {
-                let transform = tools::box_transform(drag, bounds, start, current, mods.shift, mods.alt);
+                let pivot = self.pivot_doc(editor).unwrap_or(bounds.center());
+                let transform = tools::box_transform(drag, bounds, pivot, start, current, mods.shift, mods.alt);
                 // Dropping a single point onto another one welds them (Auto Weld or <enter>).
                 if drag == Drag::Move
                     && let [moving] = self.points[..]
@@ -223,6 +230,7 @@ impl DesignMode {
                     self.execute(editor, Command::SetCurve { layer, curve });
                 }
             }
+            Gesture::Pivot { current } => self.pivot = Some(space.to_layer * current),
             Gesture::Curvature { start, current } => {
                 if let Some(mesh) = self.curved_mesh(editor, tools::curvature_delta(start, current, view.camera.zoom)) {
                     self.commit_mesh(editor, mesh);
@@ -336,10 +344,22 @@ impl DesignMode {
         };
         let screen = view.camera.doc_to_screen().transform_rect_bbox(bounds);
         let local = view.to_local(pos);
-        box_handles(screen)
+        let handle = box_handles(screen)
             .into_iter()
             .find(|(_, p)| p.distance(local) <= BOX_HANDLE_RADIUS)
-            .map(|(handle, _)| handle)
+            .map(|(handle, _)| handle);
+        // Between the box and the outer rectangle: rotate, as in Moho.
+        let in_band = rotate_band(screen).contains(local) && !screen.contains(local);
+        handle.or(in_band.then_some(BoxHandle::Rotate))
+    }
+
+    /// `true` if `pos` is on the Transform Points pivot.
+    fn hit_pivot(&self, view: &CanvasView, editor: &Editor, pos: egui::Pos2) -> bool {
+        if self.tool != Tool::TransformPoints || self.points.len() < 2 {
+            return false;
+        }
+        let Some(pivot) = self.pivot_doc(editor) else { return false };
+        (view.camera.doc_to_screen() * pivot).distance(view.to_local(pos)) <= BOX_HANDLE_RADIUS
     }
 
     /// Visible Bézier handle under `p`: (curve, node, which).
@@ -368,6 +388,10 @@ impl DesignMode {
         }
         let origin = view.camera.doc_to_screen() * start;
         let origin = egui::pos2(origin.x as f32 + view.rect.min.x, origin.y as f32 + view.rect.min.y);
+        if self.hit_pivot(view, editor, origin) {
+            self.gesture = Gesture::Pivot { current: start };
+            return;
+        }
         if let Some(handle) = self.hit_box_handle(view, editor, origin)
             && let Some(bounds) = self.points_bounds(editor)
         {

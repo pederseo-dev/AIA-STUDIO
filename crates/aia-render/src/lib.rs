@@ -67,8 +67,11 @@ pub struct Overlay<'a> {
     pub transform_box: Option<Rect>,
     /// Selection marquee being dragged, in document coordinates.
     pub marquee: Option<Rect>,
-    /// Origin of the active layer (crosshair), in document coordinates.
-    pub origin: Option<Point>,
+    /// Rotation pivot of Transform Points, in document coordinates.
+    pub pivot: Option<Point>,
+    /// Origin of the active layer (crosshair) in document coordinates, with the layer's
+    /// X and Y axes (so the arrows rotate with it).
+    pub origin: Option<(Point, (Vec2, Vec2))>,
 }
 
 /// The (normally invisible) geometry of a vector layer, for editing.
@@ -85,8 +88,8 @@ pub struct Wireframe<'a> {
     pub weld_target: Option<PointId>,
 }
 
-/// Distance (in screen points) of the rotate handle above the box.
-pub const ROTATE_HANDLE_OFFSET: f64 = 24.0;
+/// Width (in screen points) of the band around the transform box where dragging rotates, as in Moho.
+pub const ROTATE_BAND: f64 = 16.0;
 
 /// Handles of the transform box.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,12 +98,13 @@ pub enum BoxHandle {
     Corner(u8),
     /// 0 = top, 1 = right, 2 = bottom, 3 = left.
     Edge(u8),
+    /// The band between the box and the outer rectangle.
     Rotate,
 }
 
 /// Position of each handle for a box in screen space (points).
 /// Used by both the renderer and the app's hit testing, so they always match.
-pub fn box_handles(rect: Rect) -> [(BoxHandle, Point); 9] {
+pub fn box_handles(rect: Rect) -> [(BoxHandle, Point); 8] {
     let c = rect.center();
     [
         (BoxHandle::Corner(0), Point::new(rect.x0, rect.y0)),
@@ -111,14 +115,21 @@ pub fn box_handles(rect: Rect) -> [(BoxHandle, Point); 9] {
         (BoxHandle::Edge(1), Point::new(rect.x1, c.y)),
         (BoxHandle::Edge(2), Point::new(c.x, rect.y1)),
         (BoxHandle::Edge(3), Point::new(rect.x0, c.y)),
-        (BoxHandle::Rotate, Point::new(c.x, rect.y0 - ROTATE_HANDLE_OFFSET)),
     ]
 }
 
+/// Outer rectangle of the transform box: dragging between it and the box rotates.
+pub fn rotate_band(rect: Rect) -> Rect {
+    rect.inflate(ROTATE_BAND, ROTATE_BAND)
+}
+
+/// Only visible before the first frame; the scene paints the background over everything.
 const WORKSPACE_BG: peniko::Color = peniko::Color::from_rgb8(48, 48, 52);
+/// Stage frame (corner brackets and a faint border), as in Moho.
+const STAGE_FRAME: peniko::Color = peniko::Color::from_rgb8(150, 160, 200);
 const SELECTION: peniko::Color = peniko::Color::from_rgb8(40, 140, 255);
 const WIRE: peniko::Color = peniko::Color::from_rgba8(70, 70, 90, 200);
-const ORIGIN: peniko::Color = peniko::Color::from_rgb8(230, 60, 60);
+const ORIGIN: peniko::Color = peniko::Color::from_rgba8(225, 90, 90, 200);
 
 fn color(c: Color, opacity: f64) -> peniko::Color {
     peniko::Color::from_rgba8(c.r, c.g, c.b, (c.a as f64 * opacity).round().clamp(0.0, 255.0) as u8)
@@ -189,8 +200,9 @@ pub fn build_scene(scene: &mut Scene, doc: &Document, camera: &Camera, overlay: 
     scene.reset();
     let view = Affine::scale(scale) * camera.doc_to_screen();
 
-    let stage = Rect::new(0.0, 0.0, doc.width, doc.height);
-    scene.fill(Fill::NonZero, view, color(doc.background, 1.0), None, &stage);
+    // As in Moho, the background color fills the whole canvas and a frame marks the stage.
+    let everything = Rect::new(-1e6, -1e6, 1e6, 1e6);
+    scene.fill(Fill::NonZero, Affine::IDENTITY, color(doc.background, 1.0), None, &everything);
 
     // Shapes outside the stage are visible too: useful for animating entrances.
     let mut wire = None;
@@ -199,6 +211,8 @@ pub fn build_scene(scene: &mut Scene, doc: &Document, camera: &Camera, overlay: 
     if let (Some(w), Some(target)) = (&overlay.wireframe, wire) {
         draw_wireframe(scene, w, &target, scale);
     }
+
+    draw_stage_frame(scene, view.transform_rect_bbox(Rect::new(0.0, 0.0, doc.width, doc.height)), scale);
 
     let dashed = Stroke::new(scale).with_dashes(0.0, [4.0 * scale, 3.0 * scale]);
     if let Some(rect) = overlay.transform_box {
@@ -209,13 +223,51 @@ pub fn build_scene(scene: &mut Scene, doc: &Document, camera: &Camera, overlay: 
         scene.fill(Fill::NonZero, Affine::IDENTITY, SELECTION.with_alpha(0.12), None, &screen);
         scene.stroke(&dashed, Affine::IDENTITY, SELECTION, None, &screen);
     }
-    if let Some(origin) = overlay.origin {
-        let p = view * origin;
-        let r = 8.0 * scale;
-        let line = Stroke::new(1.5 * scale);
-        scene.stroke(&line, Affine::IDENTITY, ORIGIN, None, &Line::new(p - Vec2::new(r, 0.0), p + Vec2::new(r, 0.0)));
-        scene.stroke(&line, Affine::IDENTITY, ORIGIN, None, &Line::new(p - Vec2::new(0.0, r), p + Vec2::new(0.0, r)));
-        scene.stroke(&line, Affine::IDENTITY, ORIGIN, None, &Circle::new(p, r * 0.5));
+    if let Some((origin, axes)) = overlay.origin {
+        draw_origin(scene, view * origin, axes, scale);
+    }
+    if let Some(pivot) = overlay.pivot {
+        draw_pivot(scene, view * pivot, scale);
+    }
+}
+
+/// Corner brackets and a faint border around the stage (`rect` in pixels).
+fn draw_stage_frame(scene: &mut Scene, rect: Rect, scale: f64) {
+    scene.stroke(&Stroke::new(scale), Affine::IDENTITY, STAGE_FRAME.with_alpha(0.35), None, &rect);
+    let arm = 30.0 * scale;
+    let thick = Stroke::new(2.0 * scale);
+    for (corner, dx, dy) in [
+        (Point::new(rect.x0, rect.y0), 1.0, 1.0),
+        (Point::new(rect.x1, rect.y0), -1.0, 1.0),
+        (Point::new(rect.x1, rect.y1), -1.0, -1.0),
+        (Point::new(rect.x0, rect.y1), 1.0, -1.0),
+    ] {
+        let mut path = BezPath::new();
+        path.move_to(corner + Vec2::new(dx * arm, 0.0));
+        path.line_to(corner);
+        path.line_to(corner + Vec2::new(0.0, dy * arm));
+        scene.stroke(&thick, Affine::IDENTITY, STAGE_FRAME, None, &path);
+    }
+}
+
+/// Layer origin, as in Moho: a cross with arrows on the layer's X and up axes.
+/// `p` in pixels; `axes` = the layer's X and Y directions on screen.
+fn draw_origin(scene: &mut Scene, p: Point, axes: (Vec2, Vec2), scale: f64) {
+    let unit = |v: Vec2| if v.hypot() > 1e-9 { v / v.hypot() } else { v };
+    let (x, y) = (unit(axes.0), unit(axes.1));
+    let (r, head) = (30.0 * scale, 5.0 * scale);
+    let line = Stroke::new(1.2 * scale);
+    scene.stroke(&line, Affine::IDENTITY, ORIGIN, None, &Line::new(p - x * r, p + x * r));
+    scene.stroke(&line, Affine::IDENTITY, ORIGIN, None, &Line::new(p - y * r, p + y * r));
+    // Arrows on +X and up (−Y in layer space, since Y grows downwards).
+    for dir in [x, -y] {
+        let tip = p + dir * r;
+        let side = Vec2::new(-dir.y, dir.x);
+        let mut arrow = BezPath::new();
+        arrow.move_to(tip - dir * head + side * head * 0.7);
+        arrow.line_to(tip);
+        arrow.line_to(tip - dir * head - side * head * 0.7);
+        scene.stroke(&line, Affine::IDENTITY, ORIGIN, None, &arrow);
     }
 }
 
@@ -318,21 +370,21 @@ fn draw_transform_box(scene: &mut Scene, rect: Rect, scale: f64) {
     let to_px = Affine::scale(scale);
     let line = Stroke::new(scale);
     scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &(to_px.transform_rect_bbox(rect)));
-    let top = to_px * Point::new(rect.center().x, rect.y0);
-    for (handle, p) in box_handles(rect) {
-        let p = to_px * p;
-        let half = 4.0 * scale;
-        if handle == BoxHandle::Rotate {
-            scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &Line::new(top, p));
-            let dot = Circle::new(p, half);
-            scene.fill(Fill::NonZero, Affine::IDENTITY, peniko::Color::WHITE, None, &dot);
-            scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &dot);
-        } else {
-            let square = Rect::from_center_size(p, (half * 2.0, half * 2.0));
-            scene.fill(Fill::NonZero, Affine::IDENTITY, peniko::Color::WHITE, None, &square);
-            scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &square);
-        }
+    scene.stroke(&line, Affine::IDENTITY, SELECTION.with_alpha(0.5), None, &(to_px.transform_rect_bbox(rotate_band(rect))));
+    for (_, p) in box_handles(rect) {
+        let dot = Circle::new(to_px * p, 4.0 * scale);
+        scene.fill(Fill::NonZero, Affine::IDENTITY, peniko::Color::WHITE, None, &dot);
+        scene.stroke(&line, Affine::IDENTITY, SELECTION, None, &dot);
     }
+}
+
+/// Rotation pivot (Transform Points): a crosshair with a circle, as in Moho. `p` in pixels.
+fn draw_pivot(scene: &mut Scene, p: Point, scale: f64) {
+    let line = Stroke::new(1.2 * scale);
+    let (r, arm) = (4.0 * scale, 8.0 * scale);
+    scene.stroke(&line, Affine::IDENTITY, ORIGIN, None, &Circle::new(p, r));
+    scene.stroke(&line, Affine::IDENTITY, ORIGIN, None, &Line::new(p - Vec2::new(arm, 0.0), p + Vec2::new(arm, 0.0)));
+    scene.stroke(&line, Affine::IDENTITY, ORIGIN, None, &Line::new(p - Vec2::new(0.0, arm), p + Vec2::new(0.0, arm)));
 }
 
 /// The vello renderer plus the target texture, recreated when the size changes.

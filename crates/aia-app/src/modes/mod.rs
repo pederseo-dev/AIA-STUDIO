@@ -44,18 +44,22 @@ impl Icon {
     }
 }
 
+/// Side of a tool button, in points (small, as in Moho).
+pub const TOOL_BUTTON: f32 = 22.0;
+
 /// Square button of the tools panel (the caller adds the tooltip).
 pub fn tool_button(ui: &mut egui::Ui, selected: bool, icon: Icon) -> egui::Response {
-    let size = egui::vec2(28.0, 28.0);
-    match icon {
-        Icon::Glyph(glyph) => ui.add(egui::Button::selectable(selected, egui::RichText::new(glyph).size(17.0)).min_size(size)),
-        Icon::Drawn(paint) => {
-            let response = ui.add(egui::Button::selectable(selected, "").min_size(size));
-            let color = ui.style().interact_selectable(&response, selected).fg_stroke.color;
-            paint(ui.painter(), egui::Rect::from_center_size(response.rect.center(), egui::vec2(16.0, 16.0)), color);
-            response
-        }
+    let size = egui::vec2(TOOL_BUTTON, TOOL_BUTTON);
+    let button = match icon {
+        Icon::Glyph(glyph) => egui::Button::selectable(selected, egui::RichText::new(glyph).size(14.0)),
+        Icon::Drawn(_) => egui::Button::selectable(selected, ""),
+    };
+    let response = ui.add(button.min_size(size).frame_when_inactive(false));
+    if let Icon::Drawn(paint) = icon {
+        let color = ui.style().interact_selectable(&response, selected).fg_stroke.color;
+        paint(ui.painter(), egui::Rect::from_center_size(response.rect.center(), egui::vec2(14.0, 14.0)), color);
     }
+    response
 }
 
 /// "Coming soon" text for modes or sections not implemented yet.

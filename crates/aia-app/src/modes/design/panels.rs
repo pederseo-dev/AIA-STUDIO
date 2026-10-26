@@ -1,12 +1,12 @@
 //! Design mode panels: the tool options bar (above the canvas, as in Moho), Style and Layers.
 
-use aia_core::kurbo::{Affine, Point};
+use aia_core::kurbo::{Affine, Vec2};
 use aia_core::{Color, Command, Document, Editor, HandleMode, Layer, LayerId, LayerTransform, Style};
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::DesignMode;
-use super::tools::{ShapeKind, Tool};
+use super::tools::{self, ShapeKind, Tool};
+use super::{DesignMode, NumericEdit};
 
 /// Something requested in the layers panel; applied after drawing it.
 enum LayerAction {
@@ -52,9 +52,8 @@ impl DesignMode {
     /// Horizontal bar with the active tool's options, above the canvas.
     pub fn options_bar(&mut self, ui: &mut egui::Ui, editor: &mut Editor) {
         ui.horizontal(|ui| {
-            self.tool.icon().show(ui, 16.0);
-            ui.label(egui::RichText::new(self.tool.name()).strong());
-            ui.separator();
+            // As in Moho: only the tool icon (the name is in its tooltip and the status bar has the help).
+            self.tool.icon().show(ui, 16.0).on_hover_text(self.tool.name());
             match self.tool {
                 Tool::SelectPoints => {
                     if ui.button("Select All").on_hover_text("Ctrl+A").clicked()
@@ -63,24 +62,11 @@ impl DesignMode {
                         self.points = mesh.points().iter().map(|p| p.id).collect();
                     }
                 }
-                Tool::TransformPoints => {
-                    self.points_position(ui, editor);
-                    ui.separator();
-                    self.weld_options(ui);
-                    self.handles_option(ui);
-                    ui.separator();
-                    let enabled = self.points.len() >= 2;
-                    if ui.add_enabled(enabled, egui::Button::new("Flip H")).on_hover_text("Flip Horizontally").clicked() {
-                        self.flip_points(editor, true);
-                    }
-                    if ui.add_enabled(enabled, egui::Button::new("Flip V")).on_hover_text("Flip Vertically").clicked() {
-                        self.flip_points(editor, false);
-                    }
-                }
+                Tool::TransformPoints => self.transform_points_bar(ui, editor),
                 Tool::Curvature => self.handles_option(ui),
                 Tool::AddPoint => {
                     self.weld_options(ui);
-                    ui.checkbox(&mut self.sharp_corners, "Sharp Corners");
+                    ui.checkbox(&mut self.sharp_corners, "Sharp corners");
                     self.handles_option(ui);
                 }
                 Tool::DrawShape => {
@@ -104,19 +90,89 @@ impl DesignMode {
                 Tool::TransformLayer => self.layer_transform_fields(ui, editor),
                 Tool::SetOrigin => self.origin_fields(ui, editor),
             }
-            if self.tool.uses_points() && !self.points.is_empty() {
+            if self.tool.uses_points() && self.tool != Tool::TransformPoints && !self.points.is_empty() {
                 ui.separator();
                 self.points_options(ui, editor);
             }
         });
     }
 
-    /// Auto Weld, Auto Fill and Auto Stroke, as in Moho's point tools.
+    /// Same layout as Moho's Transform Points options: Select Group, Reset (pivot), Position,
+    /// Scale, Angle, Auto-weld/fill/stroke and the Bezier and flip buttons.
+    fn transform_points_bar(&mut self, ui: &mut egui::Ui, editor: &mut Editor) {
+        ui.add_enabled_ui(false, |ui| {
+            egui::ComboBox::from_id_salt("select_group")
+                .selected_text("Select Group")
+                .width(100.0)
+                .show_ui(ui, |_| {})
+        })
+        .response
+        .on_disabled_hover_text("Point groups: coming soon");
+        let reset = ui.add_enabled(self.pivot.is_some(), egui::Button::new("Reset"));
+        if reset.on_hover_text("Return the pivot to the center of the selection").clicked() {
+            self.pivot = None;
+        }
+        self.points_position(ui, editor);
+        self.points_scale_angle(ui, editor);
+        self.weld_options(ui);
+
+        let has_points = self.points.len() >= 2;
+        ui.toggle_value(&mut self.show_handles, egui::RichText::new(icons::BEZIER_CURVE).size(15.0))
+            .on_hover_text("Show Bezier Handles\nDrag a handle to reshape the curve; <alt> = corner");
+        ui.add_enabled(false, egui::Button::new(egui::RichText::new(icons::LOCK_SIMPLE).size(15.0)))
+            .on_disabled_hover_text("Fixed Bezier Handles: coming soon");
+        let flip_h = ui.add_enabled(has_points, egui::Button::new(egui::RichText::new(icons::FLIP_HORIZONTAL).size(15.0)));
+        if flip_h.on_hover_text("Flip Horizontally").clicked() {
+            self.flip_points(editor, true);
+        }
+        let flip_v = ui.add_enabled(has_points, egui::Button::new(egui::RichText::new(icons::FLIP_VERTICAL).size(15.0)));
+        if flip_v.on_hover_text("Flip Vertically").clicked() {
+            self.flip_points(editor, false);
+        }
+    }
+
+    /// Scale X/Y and Angle of the selected points around the pivot. Like Moho, they show 100% and
+    /// 0° and apply relative to the start of the edit; they return to those values afterwards.
+    fn points_scale_angle(&mut self, ui: &mut egui::Ui, editor: &mut Editor) {
+        let current = self.numeric;
+        let mut scale = current.map_or(Vec2::new(1.0, 1.0), |n| n.scale) * 100.0;
+        let mut angle = current.map_or(0.0, |n| n.angle).to_degrees();
+        let mut release = Release::default();
+        let enabled = !self.points.is_empty();
+        let mut changed = false;
+        ui.add_enabled_ui(enabled, |ui| {
+            changed |= number(ui, "Scale  X:", &mut scale.x, 1.0, "%", &mut release);
+            changed |= number(ui, "Y:", &mut scale.y, 1.0, "%", &mut release);
+            changed |= number(ui, "Angle:", &mut angle, 1.0, "°", &mut release);
+        });
+        let scale = scale / 100.0;
+        if changed
+            && scale.x.abs() > 1e-3
+            && scale.y.abs() > 1e-3
+            && let Some(pivot) = current.map(|n| n.pivot).or_else(|| self.pivot_doc(editor))
+        {
+            let before = current.map_or(Affine::IDENTITY, |n| tools::scale_rotate_about(n.pivot, n.scale, n.angle));
+            let after = tools::scale_rotate_about(pivot, scale, angle.to_radians());
+            let key = format!("points_numeric:{:?}", self.points);
+            self.transform_points(editor, after * before.inverse(), Some(key));
+            self.numeric = Some(NumericEdit {
+                scale,
+                angle: angle.to_radians(),
+                pivot,
+            });
+        }
+        if release.0 {
+            self.numeric = None;
+            editor.end_merge();
+        }
+    }
+
+    /// Auto-weld, Auto-fill and Auto-stroke, as in Moho's point tools.
     fn weld_options(&mut self, ui: &mut egui::Ui) {
-        ui.checkbox(&mut self.auto_weld, "Auto Weld")
+        ui.checkbox(&mut self.auto_weld, "Auto-weld")
             .on_hover_text("Dropping an endpoint onto another point welds them (<enter> while dragging welds any point)");
-        ui.checkbox(&mut self.auto_fill, "Auto Fill");
-        ui.checkbox(&mut self.auto_stroke, "Auto Stroke");
+        ui.checkbox(&mut self.auto_fill, "Auto-fill");
+        ui.checkbox(&mut self.auto_stroke, "Auto-stroke");
     }
 
     fn handles_option(&mut self, ui: &mut egui::Ui) {
@@ -261,8 +317,9 @@ impl DesignMode {
         let mut release = Release::default();
         number(ui, "Origin  X:", &mut origin.x, 1.0, "", &mut release);
         number(ui, "Y:", &mut origin.y, 1.0, "", &mut release);
-        if ui.button("Reset").clicked() {
-            origin = Point::ZERO;
+        if ui.button("Reset").on_hover_text("Center of the stage").clicked() {
+            let parent = editor.doc().locate_layer(id).and_then(|(parent, _)| parent);
+            origin = editor.doc().stage_center_in(parent);
             release.0 = true;
         }
         if origin != old {
@@ -515,12 +572,14 @@ impl DesignMode {
                     .and_then(|id| doc.locate_layer(id))
                     .map_or((None, None), |(p, i)| (p, Some(i + 1)));
                 let number = doc.all_layers().len() + 1;
+                let origin = doc.stage_center_in(parent);
                 let id = editor.new_layer_id();
                 let layer = if group {
                     Layer::group(id, format!("Group {number}"))
                 } else {
                     Layer::vector(id, format!("Layer {number}"))
-                };
+                }
+                .with_origin(origin);
                 self.execute(editor, Command::InsertLayer { parent, index, layer });
                 self.set_active_layer(id);
             }
@@ -533,13 +592,14 @@ impl DesignMode {
             }
             LayerAction::Group(id) => {
                 let Some((parent, index)) = doc.locate_layer(id) else { return };
+                let origin = doc.stage_center_in(parent);
                 let group = editor.new_layer_id();
                 let number = editor.doc().all_layers().len() + 1;
                 let commands = vec![
                     Command::InsertLayer {
                         parent,
                         index: Some(index),
-                        layer: Layer::group(group, format!("Group {number}")),
+                        layer: Layer::group(group, format!("Group {number}")).with_origin(origin),
                     },
                     Command::MoveLayer {
                         id,

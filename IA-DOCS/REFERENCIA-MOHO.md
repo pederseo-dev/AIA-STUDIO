@@ -282,3 +282,29 @@ Ordenados por cercanía con lo que ya tenemos. Cada uno se debate antes de imple
 - **API de scripting Lua** (no oficial, mantenida por la comunidad, cubre hasta Moho 14): https://mohoscripting.com/
   — clases consultadas: `M_Mesh`, `M_Point`, `M_Curve`, `M_Shape`, `M_Style`, `M_Bone`, `M_Skeleton`, `MohoLayer`,
   `AnimChannel`, `InterpSetting` y las constantes del módulo `MOHO`.
+
+## Verificado en Moho Pro (2026-10-25, probando la app)
+
+Detalles que el manual no explica, comprobados manejando Moho con mouse simulado:
+
+- **Add Point, clic sin arrastrar en el vacío:** no crea nada que quede. Mientras el botón está apretado se
+  ve un punto rojo temporal, pero al soltar sin arrastrar desaparece. Para empezar una curva hay que
+  arrastrar (crea dos puntos).
+- **Delete Edge, clic justo sobre un punto en medio de una curva:** no borra el punto. Borra uno de los dos
+  segmentos que llegan a él (el de un lado) y el punto queda como punta de la curva. El punto del otro
+  extremo del segmento borrado, que queda sin ninguna curva, desaparece.
+- **Delete Edge al pasar el mouse:** no resalta nada (en AIA sí se resalta el segmento).
+- Opciones de Add Point en la barra: Select Group, Auto-weld, Auto-fill, Auto-stroke, Sharp corners.
+- **Transform Points, pivote:** con los puntos seleccionados se ve una mira con un círculo (al principio en
+  el centro de la caja de selección), distinta de la cruz con flechas del origen de la capa.
+  - Se arrastra directamente para moverla; los puntos no se mueven.
+  - **La rotación** gira alrededor del pivote. Se rota arrastrando en la franja entre la caja de manijas y un
+    segundo rectángulo exterior (no hay manija de rotación aparte).
+  - **La escala** con una esquina no usa el pivote: el ancla es la esquina opuesta; el pivote se transforma
+    junto con la selección.
+  - El pivote no vuelve al centro con Deshacer ni al deseleccionar y volver a seleccionar: queda donde se dejó.
+  - Barra de opciones de Transform Points: Select Group, Reset, Position X/Y, Scale X/Y, Angle, Auto-weld,
+    Auto-fill, Auto-stroke, Show/Fixed Bezier Handles, Flip H/V.
+  - Ayuda en la barra de estado: "Move/Scale/Rotate selected points (press <enter> to weld, hold <shift> to
+    constrain, <alt> to disable auto-welding, <alt> to scale to center, <shift> while scaling to squash,
+    <ctrl/cmd> to select points)".

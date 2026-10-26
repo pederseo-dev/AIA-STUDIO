@@ -20,7 +20,7 @@ use tools::{Gesture, ShapeKind, ToolGroup};
 const HIT_TOLERANCE: f64 = 5.0;
 /// Upper limit of the curvature (also used by the curvature field).
 const MAX_CURVATURE: f64 = 2.0;
-/// Tool buttons per row in the tools panel.
+/// Tool buttons per row in the tools panel (as in Moho).
 const TOOLS_PER_ROW: usize = 4;
 
 const SELECT_ALL: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::A);
@@ -47,6 +47,11 @@ pub struct DesignMode {
     points: Vec<PointId>,
     /// Selected shapes of the active layer.
     shapes: Vec<ShapeId>,
+    /// Rotation pivot of Transform Points in layer coordinates; `None` = center of the selection.
+    /// Like Moho, it stays where it was put (also when the selection changes).
+    pivot: Option<Point>,
+    /// Scale and angle being typed in the Transform Points options (reset when the edit ends).
+    numeric: Option<NumericEdit>,
     gesture: Gesture,
     messages: Vec<String>,
     /// Layer being renamed in the layers panel.
@@ -70,6 +75,8 @@ impl Default for DesignMode {
             active_layer: None,
             points: Vec::new(),
             shapes: Vec::new(),
+            pivot: None,
+            numeric: None,
             gesture: Gesture::None,
             messages: Vec::new(),
             renaming: None,
@@ -89,6 +96,15 @@ struct Space {
     doc_tolerance: f64,
     /// Hit radius in layer coordinates.
     tolerance: f64,
+}
+
+/// Scale and rotation typed in the options bar, relative to the start of the edit.
+#[derive(Clone, Copy)]
+struct NumericEdit {
+    scale: Vec2,
+    angle: f64,
+    /// Pivot in document coordinates, fixed for the whole edit.
+    pivot: Point,
 }
 
 /// Ids for a new rectangle or oval.
@@ -116,9 +132,10 @@ pub struct DesignOverlay {
     edited_transform: Option<LayerTransform>,
     transform_box: Option<Rect>,
     marquee: Option<Rect>,
-    origin: Option<Point>,
+    origin: Option<(Point, (Vec2, Vec2))>,
     highlight: Vec<EdgeRef>,
     weld_target: Option<PointId>,
+    pivot: Option<Point>,
 }
 
 impl DesignMode {
@@ -137,6 +154,7 @@ impl DesignMode {
         self.active_layer = None;
         self.points.clear();
         self.shapes.clear();
+        self.pivot = None;
         self.gesture = Gesture::None;
         self.renaming = None;
     }
@@ -178,6 +196,7 @@ impl DesignMode {
             self.active_layer = Some(id);
             self.points.clear();
             self.shapes.clear();
+            self.pivot = None;
             self.gesture = Gesture::None;
         }
     }
@@ -208,11 +227,11 @@ impl DesignMode {
             if i > 0 {
                 ui.separator();
             }
-            ui.label(egui::RichText::new(group.title()).small().strong());
+            ui.label(egui::RichText::new(group.title()).small());
             let tools: Vec<Tool> = Tool::ALL.into_iter().filter(|t| t.group() == group).collect();
             for row in tools.chunks(TOOLS_PER_ROW) {
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
+                    ui.spacing_mut().item_spacing.x = 1.0;
                     for &tool in row {
                         let enabled = vector || !tool.needs_vector();
                         let response = ui
@@ -376,13 +395,26 @@ impl DesignMode {
         Some(mesh)
     }
 
+    /// Moves the selected points; a pivot that was placed moves with them, as in Moho.
     fn transform_points(&mut self, editor: &mut Editor, transform: Affine, merge: Option<String>) {
         if self.points.is_empty() || transform == Affine::IDENTITY || !self.check_editable(editor) {
             return;
         }
         let (Some(layer), Some(mesh)) = (self.active_layer, self.transformed_mesh(editor, transform)) else { return };
+        if let (Some(pivot), Some(to_doc)) = (self.pivot, editor.doc().world_transform(layer)) {
+            self.pivot = Some(to_doc.inverse() * transform * to_doc * pivot);
+        }
         let moves = self.points.iter().filter_map(|id| mesh.pos(*id).map(|p| (*id, p))).collect();
         self.execute_with(editor, Command::MovePoints { layer, moves }, merge);
+    }
+
+    /// Rotation pivot in document coordinates: where it was put, or the center of the selection.
+    fn pivot_doc(&self, editor: &Editor) -> Option<Point> {
+        let bounds = self.points_bounds(editor)?;
+        match self.pivot {
+            Some(pivot) => Some(editor.doc().world_transform(self.active_layer?)? * pivot),
+            None => Some(bounds.center()),
+        }
     }
 
     fn delete_points(&mut self, editor: &mut Editor) {
@@ -602,8 +634,10 @@ impl DesignMode {
                 start,
                 current,
             } => {
-                let transform = tools::box_transform(*drag, *bounds, *start, *current, shift, alt);
+                let pivot = self.pivot_doc(editor).unwrap_or(bounds.center());
+                let transform = tools::box_transform(*drag, *bounds, pivot, *start, *current, shift, alt);
                 overlay.edited_mesh = self.transformed_mesh(editor, transform);
+                overlay.pivot = Some(transform * pivot);
                 if matches!(drag, tools::Drag::Move)
                     && let ([moving], Some(mesh)) = (self.points.as_slice(), &overlay.edited_mesh)
                 {
@@ -612,6 +646,7 @@ impl DesignMode {
                 overlay.transform_box = (self.points.len() >= 2).then(|| transform.transform_rect_bbox(*bounds));
             }
             Gesture::BezierHandle { mesh, .. } => overlay.edited_mesh = Some(mesh.clone()),
+            Gesture::Pivot { current } => overlay.pivot = Some(*current),
             Gesture::AddPoint { mesh, point, anchor, .. } => {
                 overlay.weld_target = self.weld_target(mesh, *point, anchor.map(|(id, _)| id), space.tolerance);
                 overlay.edited_mesh = Some(mesh.clone());
@@ -638,22 +673,29 @@ impl DesignMode {
             Gesture::None => {}
         }
 
+        // The origin of the layer being edited is always shown, as in Moho. With a temporary
+        // transform, the origin and the layer box move with it.
+        let layer = editor.doc().layer(space.layer);
+        let parent = editor.doc().parent_transform(space.layer).unwrap_or_default();
+        let delta = match (layer, overlay.edited_transform) {
+            (Some(l), Some(t)) => parent * t.affine(l.origin) * (parent * l.affine()).inverse(),
+            _ => Affine::IDENTITY,
+        };
+        let to_doc = delta * space.to_doc;
+        overlay.origin = layer.map(|l| {
+            let axis = |v: Vec2| to_doc * (l.origin + v) - to_doc * l.origin;
+            (to_doc * l.origin, (axis(Vec2::new(1.0, 0.0)), axis(Vec2::new(0.0, 1.0))))
+        });
+
         match self.tool {
-            Tool::TransformPoints if matches!(self.gesture, Gesture::None) && self.points.len() >= 2 => {
-                overlay.transform_box = self.points_bounds(editor);
-            }
-            Tool::TransformLayer | Tool::SetOrigin => {
-                let layer = editor.doc().layer(space.layer);
-                let parent = editor.doc().parent_transform(space.layer).unwrap_or_default();
-                // With a temporary transform, the box and the origin move with it.
-                let delta = match (layer, overlay.edited_transform) {
-                    (Some(l), Some(t)) => parent * t.affine(l.origin) * (parent * l.affine()).inverse(),
-                    _ => Affine::IDENTITY,
-                };
-                overlay.origin = layer.map(|l| delta * (space.to_doc * l.origin));
-                if self.tool == Tool::TransformLayer {
-                    overlay.transform_box = Self::layer_bounds(editor, space.layer).map(|b| delta.transform_rect_bbox(b));
+            Tool::TransformPoints if self.points.len() >= 2 => {
+                if matches!(self.gesture, Gesture::None) {
+                    overlay.transform_box = self.points_bounds(editor);
                 }
+                overlay.pivot = overlay.pivot.or_else(|| self.pivot_doc(editor));
+            }
+            Tool::TransformLayer => {
+                overlay.transform_box = Self::layer_bounds(editor, space.layer).map(|b| delta.transform_rect_bbox(b));
             }
             Tool::CreateShape => {
                 if let Some((_, outline)) = self
@@ -694,6 +736,7 @@ impl DesignMode {
             transform_box: data.transform_box,
             marquee: data.marquee,
             origin: data.origin,
+            pivot: data.pivot,
         }
     }
 }

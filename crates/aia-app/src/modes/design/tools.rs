@@ -113,7 +113,7 @@ impl Tool {
                 "Select points (click a point, a curve or a fill; drag for a marquee; hold <shift> to add, <alt> to remove)"
             }
             Tool::TransformPoints => {
-                "Move selected points (box handles scale and rotate; hold <shift> to constrain, <alt> to scale from the center; arrows to nudge)"
+                "Move/Scale/Rotate selected points (drag between the two boxes to rotate around the pivot, drag the pivot to move it; press <enter> to weld, hold <shift> to constrain, <alt> to scale from the center)"
             }
             Tool::AddPoint => {
                 "Add points (drag from empty space for a new curve, from an end to extend it, on a curve to insert; drop on a point to weld; <shift> for 45°)"
@@ -212,6 +212,8 @@ pub enum Gesture {
     },
     /// Curvature drag: the horizontal distance changes the curvature at the selected points.
     Curvature { start: Point, current: Point },
+    /// Moving the rotation pivot of Transform Points.
+    Pivot { current: Point },
     /// Rectangle or oval being drawn.
     DrawShape { start: Point, current: Point },
     /// Moving, scaling or rotating the active layer.
@@ -270,6 +272,11 @@ fn scale_about(anchor: Point, sx: f64, sy: f64) -> Affine {
     Affine::translate(anchor.to_vec2()) * Affine::scale_non_uniform(sx, sy) * Affine::translate(-anchor.to_vec2())
 }
 
+/// Scale and rotation of the selection around `pivot` (numeric fields of Transform Points).
+pub fn scale_rotate_about(pivot: Point, scale: Vec2, angle: f64) -> Affine {
+    Affine::translate(pivot.to_vec2()) * Affine::rotate(angle) * Affine::scale_non_uniform(scale.x, scale.y) * Affine::translate(-pivot.to_vec2())
+}
+
 fn rotate_about(center: Point, angle: f64) -> Affine {
     Affine::translate(center.to_vec2()) * Affine::rotate(angle) * Affine::translate(-center.to_vec2())
 }
@@ -282,11 +289,11 @@ fn factor(anchor: f64, from: f64, to: f64) -> f64 {
 }
 
 /// Rotation angle when dragging from `start` to `current` around `center`.
-/// `snap` (Shift) rounds it to steps of 15°.
-pub fn drag_angle(center: Point, start: Point, current: Point, snap: bool) -> f64 {
+/// `snap` (Shift) rounds it to steps of `step_degrees`.
+pub fn drag_angle(center: Point, start: Point, current: Point, snap: bool, step_degrees: f64) -> f64 {
     let angle = (current - center).atan2() - (start - center).atan2();
     if snap {
-        let step = 15f64.to_radians();
+        let step = step_degrees.to_radians();
         (angle / step).round() * step
     } else {
         angle
@@ -294,9 +301,9 @@ pub fn drag_angle(center: Point, start: Point, current: Point, snap: bool) -> f6
 }
 
 /// Transform (in document coordinates) of the selection while dragging.
-/// `proportional` (Shift) keeps the aspect ratio or rotates in 15° steps;
-/// `from_center` (Alt) scales from the center.
-pub fn box_transform(drag: Drag, bounds: Rect, start: Point, current: Point, proportional: bool, from_center: bool) -> Affine {
+/// `proportional` (Shift) keeps the aspect ratio or rotates in 45° steps;
+/// `from_center` (Alt) scales from the center. Rotation is around `pivot`, as in Moho.
+pub fn box_transform(drag: Drag, bounds: Rect, pivot: Point, start: Point, current: Point, proportional: bool, from_center: bool) -> Affine {
     let center = bounds.center();
     let delta = current - start;
     let handle = match drag {
@@ -304,7 +311,7 @@ pub fn box_transform(drag: Drag, bounds: Rect, start: Point, current: Point, pro
         Drag::Handle(handle) => handle,
     };
     match handle {
-        BoxHandle::Rotate => rotate_about(center, drag_angle(center, start, current, proportional)),
+        BoxHandle::Rotate => rotate_about(pivot, drag_angle(pivot, start, current, proportional, 45.0)),
         BoxHandle::Corner(i) => {
             let moving = corner(bounds, i);
             let anchor = if from_center { center } else { corner(bounds, (i + 2) % 4) };
@@ -363,7 +370,7 @@ pub fn layer_drag(drag: Drag, original: LayerTransform, origin: Point, to_parent
             t.translation += (to_parent * current) - (to_parent * start);
         }
         Drag::Handle(BoxHandle::Rotate) => {
-            t.rotation += drag_angle(origin, start, current, shift);
+            t.rotation += drag_angle(origin, start, current, shift, 15.0);
         }
         Drag::Handle(handle) => {
             let (from, to) = (start - origin, current - origin);
@@ -413,7 +420,7 @@ mod tests {
     fn corner_scale_keeps_opposite_corner() {
         let bounds = Rect::new(0.0, 0.0, 10.0, 10.0);
         let drag = Drag::Handle(BoxHandle::Corner(2));
-        let t = box_transform(drag, bounds, Point::new(10.0, 10.0), Point::new(20.0, 15.0), false, false);
+        let t = box_transform(drag, bounds, bounds.center(), Point::new(10.0, 10.0), Point::new(20.0, 15.0), false, false);
         assert!(close(t * Point::ZERO, Point::ZERO));
         assert!(close(t * Point::new(10.0, 10.0), Point::new(20.0, 15.0)));
     }
@@ -422,15 +429,25 @@ mod tests {
     fn edge_scale_only_one_axis() {
         let bounds = Rect::new(0.0, 0.0, 10.0, 10.0);
         let drag = Drag::Handle(BoxHandle::Edge(1));
-        let t = box_transform(drag, bounds, Point::new(10.0, 5.0), Point::new(20.0, 50.0), false, false);
+        let t = box_transform(drag, bounds, bounds.center(), Point::new(10.0, 5.0), Point::new(20.0, 50.0), false, false);
         assert!(close(t * Point::new(10.0, 10.0), Point::new(20.0, 10.0)));
     }
 
     #[test]
     fn rotation_snaps_to_15_degrees() {
-        let angle = drag_angle(Point::ZERO, Point::new(0.0, -10.0), Point::new(4.0, -10.0), true);
+        let angle = drag_angle(Point::ZERO, Point::new(0.0, -10.0), Point::new(4.0, -10.0), true, 15.0);
         let steps = angle / 15f64.to_radians();
         assert!((steps - steps.round()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rotation_is_around_the_pivot() {
+        let bounds = Rect::new(0.0, 0.0, 10.0, 10.0);
+        let pivot = Point::new(10.0, 10.0);
+        let drag = Drag::Handle(BoxHandle::Rotate);
+        let t = box_transform(drag, bounds, pivot, Point::new(20.0, 10.0), Point::new(10.0, 20.0), false, false);
+        assert!(close(t * pivot, pivot));
+        assert!(close(t * Point::new(0.0, 10.0), Point::new(10.0, 0.0)));
     }
 
     #[test]

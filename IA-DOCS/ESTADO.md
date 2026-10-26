@@ -29,9 +29,8 @@ No es objetivo (por ahora): animación tradicional cuadro a cuadro ni dibujo a m
 
 ## Trabajo en curso (leer primero)
 
-- **Sin commit:** v2.0 (Etapa 1, modelo estilo Moho) y v2.1 (layout de Moho + interfaz en inglés)
-  están en el árbol de trabajo pero todavía no se commitearon. Último commit: v1.4.
-- **Falta prueba manual de v2.1 y v2.2:** compila, 36 tests y clippy limpios, pero no se probó con
+- Último commit: v2.2 (`51e6a65`). **Sin commit:** v2.3.
+- **Falta prueba manual de v2.1–v2.3:** compila, 37 tests y clippy limpios, pero no se probó con
   el mouse (ver ARQUITECTURA §8: preguntar antes de simular entrada).
 - Próximo paso acordado: que el usuario pruebe v2.1 y v2.2, commitear (usuario autor, Claude co-autor) y
   debatir la Etapa 2.
@@ -156,6 +155,24 @@ ayuda de la herramienta (como Moho)                     zoom · agente
 - Pendiente de verificar en Moho (el manual no lo dice): clic suelto con Add Point (¿punto aislado?) y
   Delete Edge sobre un punto (¿borra el punto? ¿la curva se une o se corta?).
 - Tests: 36.
+
+**v2.3 — Más como Moho**
+- Delete Edge: el punto que queda sin ninguna curva se elimina (verificado en Moho Pro).
+- Panel Tools más chico (botones de 22 px, sin marco si no están activos).
+- El color de fondo llena todo el canvas y el escenario se marca con esquinas y un borde tenue, como
+  Moho. Fondo por defecto blanco hueso (240, 240, 228) en vez de blanco puro.
+- El origen de la capa activa se ve siempre (cruz con flechas en X y hacia arriba, gira con la capa).
+- Las capas y grupos nuevos tienen el origen en el centro del escenario, como Moho (también el Reset
+  de Set Origin).
+- **Pivote de Transform Points** (como Moho): mira con círculo, arranca en el centro de la selección, se
+  arrastra directamente, se queda donde se deja (por capa, no se guarda en el archivo) y acompaña a los
+  puntos. **Rotar** = arrastrar en la franja entre la caja y el rectángulo exterior (también en Transform
+  Layer, alrededor del origen); `Shift` = pasos de 45°. Las manijas de la caja son círculos.
+- Barra de opciones de Transform Points copiada de Moho: Select Group (deshabilitado, sin grupos todavía),
+  Reset (pivote al centro), Position X/Y, Scale X/Y (%), Angle (°) relativos alrededor del pivote,
+  Auto-weld, Auto-fill, Auto-stroke, Show Bezier Handles, Fixed Bezier Handles (deshabilitado), Flip H/V.
+  La barra muestra solo el ícono de la herramienta, como Moho.
+- Tests: 38.
 
 ## Problemas conocidos / resueltos
 

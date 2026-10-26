@@ -594,7 +594,7 @@ impl eframe::App for AiaApp {
         if self.layout.tools_open {
             egui::Panel::left("tools")
                 .resizable(false)
-                .exact_size(140.0)
+                .exact_size(4.0 * modes::TOOL_BUTTON + 3.0 + 14.0)
                 .show(ui, |ui| self.tools_panel(ui));
         }
         if self.layout.chat_open {

@@ -229,8 +229,8 @@ impl Mesh {
         });
     }
 
-    /// Deletes a segment without deleting its points. An open curve is split in two
-    /// (the second one gets `new_curve`); a closed one is opened.
+    /// Deletes a segment. An open curve is split in two (the second one gets `new_curve`);
+    /// a closed one is opened. Its points are kept unless no curve uses them any more (as in Moho).
     pub fn delete_edge(&mut self, curve: CurveId, segment: usize, new_curve: CurveId) -> bool {
         let Some(ci) = self.curves.iter().position(|c| c.id == curve) else { return false };
         if segment >= self.curves[ci].segment_count() {
@@ -238,6 +238,7 @@ impl Mesh {
         }
         self.retopologize(|mesh| {
             let j = mesh.curves[ci].next(segment);
+            let ends = [mesh.curves[ci].nodes[segment].point, mesh.curves[ci].nodes[j].point];
             // The new ends keep the shape of what remains.
             mesh.bake_node(ci, segment);
             mesh.bake_node(ci, j);
@@ -256,6 +257,11 @@ impl Mesh {
                 }
             }
             mesh.curves.retain(|c| c.nodes.len() >= 2);
+            for point in ends {
+                if !mesh.curves.iter().any(|c| c.node_index(point).is_some()) {
+                    mesh.remove_point(point);
+                }
+            }
             Change::default()
         });
         true
@@ -473,6 +479,16 @@ mod tests {
         // The fill is lost; the outline keeps the other three sides.
         assert!(mesh.shapes[0].fill.is_empty());
         assert_eq!(mesh.shapes[0].outline.len(), 3);
+    }
+
+    #[test]
+    fn deleting_an_end_edge_removes_the_lonely_point() {
+        let mut mesh = square();
+        assert!(mesh.delete_edge(CurveId(10), 1, CurveId(11)));
+        // Now open: 3 → 4 → 1 → 2. Deleting its first segment leaves point 3 without curves.
+        assert!(mesh.delete_edge(CurveId(10), 0, CurveId(12)));
+        assert!(mesh.point(PointId(3)).is_none());
+        assert_eq!(mesh.points().len(), 3);
     }
 
     #[test]

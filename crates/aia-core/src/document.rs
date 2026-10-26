@@ -101,6 +101,11 @@ impl Layer {
         }
     }
 
+    pub fn with_origin(mut self, origin: Point) -> Self {
+        self.origin = origin;
+        self
+    }
+
     /// From layer space to parent space.
     pub fn affine(&self) -> Affine {
         self.transform.affine(self.origin)
@@ -155,17 +160,29 @@ impl Default for Document {
         let mut doc = Self {
             width: 1920.0,
             height: 1080.0,
-            background: Color::WHITE,
+            // Off-white like Moho's, easier on the eyes than pure white.
+            background: Color::rgb(240, 240, 228),
             layers: Vec::new(),
             next_id: 1,
         };
         let id = doc.new_layer_id();
-        doc.layers.push(Layer::vector(id, "Layer 1"));
+        let origin = doc.stage_center_in(None);
+        doc.layers.push(Layer::vector(id, "Layer 1").with_origin(origin));
         doc
     }
 }
 
 impl Document {
+    /// Center of the stage in the space of a new layer inside `parent`: where new layers get
+    /// their origin, as in Moho.
+    pub fn stage_center_in(&self, parent: Option<LayerId>) -> Point {
+        let center = Point::new(self.width / 2.0, self.height / 2.0);
+        match parent.and_then(|id| self.world_transform(id)) {
+            Some(to_doc) => to_doc.inverse() * center,
+            None => center,
+        }
+    }
+
     fn alloc_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
